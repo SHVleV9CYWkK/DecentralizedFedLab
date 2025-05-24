@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from copy import deepcopy
 
 import numpy as np
 import torch
@@ -36,7 +35,6 @@ class Client(ABC):
         self.global_metric = self.global_epoch = 0
         self.lr_scheduler = None
         self.neighbor_model_weights = []
-        self.aggregated_weight = None
         self.last_accuracy = None
 
     def _weight_aggregation(self):
@@ -70,6 +68,10 @@ class Client(ABC):
     def average_aggregate(self):
         raise NotImplementedError
 
+    @abstractmethod
+    def set_init_model(self, model):
+        raise NotImplementedError
+
     def init_client(self):
         self.optimizer = get_optimizer(self.optimizer_name, self.model.parameters(), self.lr)
         self.lr_scheduler = get_lr_scheduler(self.optimizer, self.scheduler_name, self.n_rounds)
@@ -78,11 +80,7 @@ class Client(ABC):
         if self.last_accuracy is not None:
             self.lr_scheduler.step(self.last_accuracy)
 
-    def set_init_model(self, model):
-        self.model = deepcopy(model)
-        if len(self.neighbor_model_weights) != 0:
-            self.average_aggregate()
-            self.model.load_state_dict(self.aggregated_weight)
+
 
     def receive_neighbor_model(self, neighbor_model):
         self.neighbor_model_weights.append(neighbor_model)

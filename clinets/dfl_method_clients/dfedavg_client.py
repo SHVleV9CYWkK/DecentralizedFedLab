@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 from clinets.client import Client
 
 class DFedAvgClient(Client):
@@ -8,6 +10,10 @@ class DFedAvgClient(Client):
         self.model.load_state_dict(self._weight_aggregation())
         self.neighbor_model_weights.clear()
 
+    def set_init_model(self, model):
+        self.model = deepcopy(model)
+        if len(self.neighbor_model_weights) != 0:
+            self.average_aggregate()
 
     def train(self):
         self._local_train()
