@@ -17,6 +17,7 @@ class DFedCADClient(Client):
 
         self.teacher_info_list = []
         self.dkm_layers = {}
+        self.mask = {}
 
         self.cluster_model = None
         self.global_model = None
@@ -75,6 +76,16 @@ class DFedCADClient(Client):
 
         self.teacher_info_list = teacher_info_list
 
+    def _prune_model_weights(self):
+        pruned_state_dict = {}
+        for key, weight in self.model.state_dict().items():
+            if key in self.mask:
+                pruned_state_dict[key] = weight * self.mask[key]
+            else:
+                pruned_state_dict[key] = weight
+        return pruned_state_dict
+
+
     def _cluster_and_prune_model_weights(self):
         clustered_state_dict = {}
         mask_dict = {}
@@ -93,6 +104,7 @@ class DFedCADClient(Client):
             else:
                 clustered_state_dict[key] = weight
                 mask_dict[key] = torch.ones_like(weight, dtype=torch.bool)
+        self.mask = mask_dict
         return clustered_state_dict, centroids_dict, labels_dict
 
     def _weight_aggregation(self):
@@ -175,6 +187,8 @@ class DFedCADClient(Client):
             alpha = 0.5
 
             for batch_idx, (x, labels) in enumerate(self.client_train_loader):
+                self.model.load_state_dict(self._prune_model_weights())
+
                 x, labels = x.to(self.device), labels.to(self.device)
                 self.optimizer.zero_grad()
                 outputs = self.model(x)
