@@ -148,8 +148,7 @@ def get_lr_scheduler(optimizer, scheduler_name, n_rounds=None, gated_learner=Fal
     else:
         raise NotImplementedError("Other learning rate schedulers are not implemented")
 
-
-def get_client_delay_info(num_clients, delay_client_ratio, minimum_round, total_rounds, dist_type="single"):
+def get_client_delay_info(num_clients, delay_client_ratio, minimum_round, total_rounds, dist_type="single", preset_client_id=-1):
     if total_rounds <= minimum_round:
         raise ValueError("total_rounds must be greater than minimum_round")
     if not (0 <= delay_client_ratio <= 1):
@@ -161,9 +160,11 @@ def get_client_delay_info(num_clients, delay_client_ratio, minimum_round, total_
     if dist_type.lower() == "single":
         if num_clients < 1:
             raise ValueError("There must be at least one client to delay.")
-        delayed_cid = random.choice(client_ids)
-        join_round = minimum_round
-        client_delay_info[delayed_cid] = join_round
+        if preset_client_id > -1:
+            client_delay_info[preset_client_id] = minimum_round
+        else:
+            delayed_cid = random.choice(client_ids)
+            client_delay_info[delayed_cid] = minimum_round
 
     else:
         num_delayed = int(round(num_clients * delay_client_ratio))

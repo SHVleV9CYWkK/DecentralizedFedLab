@@ -49,7 +49,7 @@ def execute_experiment(args, device, exper_num, today_date, logger):
     clients = create_client(num_clients, args, client_indices, full_dataset, device)
 
     client_delay = get_client_delay_info(num_clients, args.delay_client_ratio, args.minimum_join_rounds, args.n_rounds,
-                                         args.temp_client_dist)
+                                         args.temp_client_dist, args.set_single_delay_client)
 
     logger.save("client_delay", client_delay)
 
