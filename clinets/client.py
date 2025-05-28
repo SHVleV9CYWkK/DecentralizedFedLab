@@ -65,7 +65,7 @@ class Client(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def average_aggregate(self):
+    def aggregate(self):
         raise NotImplementedError
 
     @abstractmethod
@@ -79,8 +79,6 @@ class Client(ABC):
     def update_lr(self):
         if self.last_accuracy is not None:
             self.lr_scheduler.step(self.last_accuracy)
-
-
 
     def receive_neighbor_model(self, neighbor_model):
         self.neighbor_model_weights.append(neighbor_model)

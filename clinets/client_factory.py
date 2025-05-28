@@ -1,5 +1,7 @@
 from clinets.dfl_method_clients.dfedavg_client import DFedAvgClient
 from clinets.dfl_method_clients.dfedcad_client import DFedCADClient
+from clinets.dfl_method_clients.dfedmtkd_client import DFedMTKDClient
+from clinets.dfl_method_clients.dfedmtkdrl_client import DFedMTKDRLClient
 
 
 def create_client(num_client, args, dataset_index, full_dataset, device):
@@ -14,17 +16,24 @@ def create_client(num_client, args, dataset_index, full_dataset, device):
 
     fl_type = args.fl_method
     if fl_type == "dfedavg":
-        client_prototype = DFedAvgClient
-    elif "dfedcad" in fl_type:
-        client_prototype = DFedCADClient
+        client_class = DFedAvgClient
+    elif "dfedcad" == fl_type:
+        client_class = DFedCADClient
         train_hyperparam['lambda_kd'] = args.lambda_kd
         train_hyperparam['n_clusters'] = args.n_clusters
         train_hyperparam['lambda_alignment'] = args.lambda_alignment
+    elif "dfedmtkdrl" == fl_type:
+        client_class = DFedMTKDRLClient
+        train_hyperparam['lambda_kd'] = args.lambda_kd
+    elif "dfedmtkd" == fl_type:
+        client_class = DFedMTKDClient
+        train_hyperparam['lambda_kd'] = args.lambda_kd
+
     else:
         raise NotImplementedError(f'Invalid Federated learning method name: {fl_type}')
 
     clients_list = [None] * num_client
     for idx in range(num_client):
-        clients_list[idx] = client_prototype(idx, dataset_index[idx], full_dataset, train_hyperparam, device)
+        clients_list[idx] = client_class(idx, dataset_index[idx], full_dataset, train_hyperparam, device)
 
     return clients_list

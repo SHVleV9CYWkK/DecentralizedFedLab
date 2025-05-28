@@ -62,7 +62,6 @@ class DFedCADClient(Client):
         for teacher_m, teacher_c, teacher_cl in self.neighbor_model_weights:
             teacher_logits, teacher_loss = self._collect_logits_for_distill(teacher_m)
             teacher_info_list.append({
-                'model': teacher_m,
                 'centroids': teacher_c,
                 'teacher_logits': teacher_logits,
                 'loss': teacher_loss,
@@ -160,7 +159,7 @@ class DFedCADClient(Client):
         else:
             return torch.zeros((), device=self.device)
 
-    def average_aggregate(self):
+    def aggregate(self):
         self.global_model.load_state_dict(self._weight_aggregation())
         self.neighbor_model_weights.clear()
 
@@ -176,7 +175,7 @@ class DFedCADClient(Client):
 
         if self.neighbor_model_weights and self.is_align:
             self._all_teacher_info()
-            self.average_aggregate()
+            self.aggregate()
 
         for epoch in range(self.epochs):
             ref_momentum = self._compute_global_local_model_difference()

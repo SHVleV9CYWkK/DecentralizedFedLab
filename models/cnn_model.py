@@ -41,13 +41,6 @@ class LeafCNN1(torch.nn.Module):
         self.fc1 = torch.nn.Linear(64 * 4 * 4, 2048)
         self.output = torch.nn.Linear(2048, num_classes)
 
-        # adapted_model_para is used to make self-model a non-leaf computational graph,
-        # such that other trainable components using self-model can track the grad passing self-model,
-        # e.g. a gating layer that changes the weights of self-model
-        self.adapted_model_para = {name: None for name, val in self.named_parameters()}
-        # ['conv1.weight', 'conv1.bias', 'conv2.weight', 'conv2.bias',
-        # 'fc1.weight', 'fc1.bias', 'output.weight', 'output.bias']
-
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
@@ -90,7 +83,6 @@ class AlexNet(torch.nn.Module):
         super(AlexNet, self).__init__()
         self.model = alexnet(weights=AlexNet_Weights.DEFAULT)
         self.model.classifier[6] = nn.Linear(4096, num_classes)
-        self.adapted_model_para = {name: None for name, _ in self.named_parameters()}
 
     def forward(self, x):
         return self.model(x)
@@ -101,8 +93,6 @@ class ResNet18(torch.nn.Module):
         self.model = resnet18(weights=ResNet18_Weights.DEFAULT)
         self.model.fc = nn.Linear(512, num_classes)
 
-        # 创建一个字典来保存自适应参数
-        self.adapted_model_para = {name: None for name, val in self.named_parameters()}
 
     def forward(self, x):
         return self.model(x)
@@ -114,8 +104,6 @@ class ResNet50(nn.Module):
         self.model = resnet50(weights=ResNet50_Weights.DEFAULT)
         # ResNet50 最后一层全连接层的输入通道数为 2048
         self.model.fc = nn.Linear(2048, num_classes)
-        # 创建一个字典来保存自适应参数
-        self.adapted_model_para = {name: None for name, _ in self.named_parameters()}
 
     def forward(self, x):
         return self.model(x)
@@ -127,8 +115,6 @@ class VGG16(nn.Module):
         super(VGG16, self).__init__()
         self.model = vgg16(weights=VGG16_Weights.DEFAULT)
         self.model.classifier[6] = nn.Linear(4096, num_classes)  # 修改最后一个全连接层
-
-        self.adapted_model_para = {name: None for name, val in self.model.named_parameters()}
 
     def forward(self, x):
         return self.model(x)

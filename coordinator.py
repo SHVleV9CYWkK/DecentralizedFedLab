@@ -206,6 +206,9 @@ class Coordinator:
         self._clients_train()
 
     def interchange_model(self, current_round):
+        for client in self.all_clients:
+            client.neighbor_model_weights.clear()
+
         self.generate_connected_graph()
         pre_add_clients = []
         for i in range(self.num_clients):
@@ -232,7 +235,7 @@ class Coordinator:
 
         print("Aggregating model weights...")
         for client in self.participated_training_clients:
-            client.average_aggregate()
+            client.aggregate()
 
     def evaluate_client(self):
         print("Evaluating model...")

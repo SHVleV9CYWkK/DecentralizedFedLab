@@ -48,7 +48,7 @@ def parse_args_for_visualization():
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--fl_method', type=str, default='dfedavg', choices=['dfedavg', 'dfedcad'], help='Decentralized federated learning method')
+    parser.add_argument('--fl_method', type=str, default='dfedavg', choices=['dfedavg', 'dfedcad', 'dfedmtkd', 'dfedmtkdrl'], help='Decentralized federated learning method')
     parser.add_argument('--dataset_name', type=str, default='emnist', choices=['cifar10', 'cifar100', 'emnist', 'mnist', 'tiny_imagenet'],
                         help='dataset name')
     parser.add_argument('--alpha', type=float, default=0.4, help='The alpha of the dataset, which is used to select the dataset')
@@ -71,8 +71,9 @@ def parse_args():
     parser.add_argument('--base_decay_rate', type=float, default=0.5, help='Momentum updates the base attenuation rate locally')
     parser.add_argument('--minimum_join_rounds', type=int, default=25, help='Number of rounds to start joining a new client')
     parser.add_argument('--temp_client_dist', type=str, default='single', choices=['uniform', 'even', 'normal', 'single'], help='Temporarily join the client distribution')
-    parser.add_argument('--lambda_kd', type=float, default=0, help='Distillation strength')
+    parser.add_argument('--lambda_kd', type=float, default=0.1, help='Distillation strength')
     parser.add_argument('--lambda_alignment', type=float, default=0.1, help='Alignment strength')
+    parser.add_argument('--lambda_feature_kd', type=float, default=0.1, help='Distillation strength acting on feature parts')
     parser.add_argument('--n_job', type=int, default=1, help='The number of processes that execute client training in parallel in the server')
     parser.add_argument('--seed', type=int, default=42, help='random seed')
     parser.add_argument('--log_dir', type=str, default='logs', help='log directory')
