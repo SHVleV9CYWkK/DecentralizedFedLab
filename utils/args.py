@@ -88,8 +88,6 @@ def parse_args():
 
     args = parser.parse_args()
 
-    if args.fl_method == 'dfedcad' and args.lambda_kd == 0.0:
-        args.fl_method = 'dfedcad_without_kd'
-    elif args.fl_method == 'dfedcad' and args.lambda_alignment == 0.0:
+    if args.fl_method == 'dfedcad' and args.lambda_alignment == 0.0:
         args.fl_method = 'dfedcad_without_alignment'
     return args

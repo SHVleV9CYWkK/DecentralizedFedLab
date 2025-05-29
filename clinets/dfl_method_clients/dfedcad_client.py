@@ -10,7 +10,6 @@ from utils.kmeans import TorchKMeans
 class DFedCADClient(Client):
     def __init__(self, client_id, dataset_index, full_dataset, hyperparam, device):
         super().__init__(client_id, dataset_index, full_dataset, hyperparam, device)
-        self.lambda_kd = hyperparam['lambda_kd'] if 'lambda_kd' in hyperparam else 0.1
         self.lambda_alignment = hyperparam['lambda_alignment'] if 'lambda_alignment' in hyperparam else 0.1
         self.n_clusters = hyperparam['n_clusters'] if 'n_clusters' in hyperparam else 16
         self.base_decay_rate = hyperparam['base_decay_rate'] if 'base_decay_rate' in hyperparam else 0.5
@@ -137,10 +136,6 @@ class DFedCADClient(Client):
                  for t in self.teacher_info_list], dim=0  # (T,K,1)
             )
             teacher_alphas = torch.tensor([t["alpha"] for t in self.teacher_info_list], device=self.device)  # (T,)
-            # teacher_labels = [
-            #     t["teacher_centroids_label"][layer_key]  # LongTensor(N_w,)
-            #     for t in self.teacher_info_list
-            # ]
 
             # 3) 调用 DKM 层，得到重构
             X_rec, _, _ = dkm(
@@ -193,20 +188,9 @@ class DFedCADClient(Client):
                 outputs = self.model(x)
                 loss_sup = self.criterion(outputs, labels).mean()
 
-                loss_kd = 0.0
-                if self.lambda_kd > 0:
-                    start, end = batch_idx * x.size(0), (batch_idx + 1) * x.size(0)
-                    stu_prob = torch.softmax(outputs, dim=1)
-                    for tinfo in self.teacher_info_list:
-                        tea_logits = tinfo["teacher_logits"][start:end].to(self.device)
-                        tea_prob = torch.softmax(tea_logits, dim=1)
-                        loss_kd += F.kl_div(
-                            stu_prob.log(), tea_prob, reduction="batchmean"
-                        )
-
                 loss_align = self._compute_alignment_loss()
 
-                loss_final = loss_sup + self.lambda_kd * loss_kd + self.lambda_alignment * loss_align
+                loss_final = loss_sup + self.lambda_alignment * loss_align
                 loss_final.backward()
 
                 if exponential_average_loss is None:
