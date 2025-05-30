@@ -206,9 +206,6 @@ class Coordinator:
         self._clients_train()
 
     def interchange_model(self, current_round):
-        for client in self.all_clients:
-            client.neighbor_model_weights.clear()
-
         self.generate_connected_graph()
         pre_add_clients = []
         for i in range(self.num_clients):

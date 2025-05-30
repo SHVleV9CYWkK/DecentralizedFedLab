@@ -7,6 +7,23 @@ from models.dkm import MultiTeacherDKMLayer
 from utils.kmeans import TorchKMeans
 
 
+def _cfd_distance(centroids_a, centroids_b, n_freqs=512, sigma=1.0):
+    device = centroids_a.device
+    if centroids_a.ndim == 1:
+        centroids_a = centroids_a.view(-1, 1)
+        centroids_b = centroids_b.view(-1, 1)
+    D = centroids_a.shape[1]
+    # 采样 n_freqs 个频率向量
+    freqs = torch.randn(n_freqs, D, device=device) * sigma  # [n_freqs, D]
+    # [n_freqs, K] ← [n_freqs, D] x [K, D]^T
+    fa = (freqs @ centroids_a.T)   # shape: [n_freqs, K]
+    fb = (freqs @ centroids_b.T)
+    phi_a = torch.mean(torch.exp(1j * fa), dim=1)  # [n_freqs]
+    phi_b = torch.mean(torch.exp(1j * fb), dim=1)  # [n_freqs]
+    cfd = torch.mean(torch.abs(phi_a - phi_b) ** 2)
+    return cfd.item() if not isinstance(cfd, float) else cfd
+
+
 class DFedCADClient(Client):
     def __init__(self, client_id, dataset_index, full_dataset, hyperparam, device):
         super().__init__(client_id, dataset_index, full_dataset, hyperparam, device)
@@ -30,49 +47,43 @@ class DFedCADClient(Client):
                 self.dkm_layers[key] = MultiTeacherDKMLayer(n_clusters=self.n_clusters,
                                                             alpha_mix=0.7, beta_dist=2.0).to(self.device)
 
-    def _collect_logits_for_distill(self, model_state_dict):
-        all_logits = []
-        total_loss = 0.0
-        total_samples = 0
-        criterion = torch.nn.CrossEntropyLoss(reduction='sum')
-
-        if self.teacher_model is None:
-            self.teacher_model = deepcopy(self.model)
-        self.teacher_model.load_state_dict(model_state_dict)
-
-        self.teacher_model.eval()
-        with torch.no_grad():
-            for batch_idx, (x, labels) in enumerate(self.client_train_loader):
-                x, labels = x.to(self.device), labels.to(self.device)
-                logits = self.teacher_model(x)
-                loss_batch = criterion(logits, labels)
-                total_loss += loss_batch.item()
-                total_samples += x.size(0)
-                all_logits.append(logits)
-
-        avg_loss = total_loss / (total_samples + 1e-12)
-        return torch.cat(all_logits, dim=0), avg_loss
-
     def _all_teacher_info(self):
-        if self.lambda_alignment == 0.0:
-            return
-        teacher_info_list = []
-        # 邻居返回三元组 教师压缩模型， 教师质心， 教师索引表
-        for teacher_m, teacher_c, teacher_cl in self.neighbor_model_weights:
-            teacher_logits, teacher_loss = self._collect_logits_for_distill(teacher_m)
-            teacher_info_list.append({
-                'centroids': teacher_c,
-                'teacher_logits': teacher_logits,
-                'loss': teacher_loss,
-                'teacher_centroids_label': teacher_cl
-            })
-        beta = 0.5
-        losses = torch.tensor([t["loss"] for t in teacher_info_list])
-        alphas = torch.softmax(-beta * losses, dim=0)
-        for t, info in enumerate(teacher_info_list):
-            info["alpha"] = alphas[t].item()
+        # 聚类本地模型，获得本地质心表
+        _, local_centroids_dict, _ = self._cluster_and_prune_model_weights()
+        cfd_scores = []
+        teacher_centroids_dicts = []
+        cfd_matrix = []
+        # 遍历每个教师模型：三元组(权重, centroids, 索引)
+        for _, teacher_centroids, _ in self.neighbor_model_weights:
+            per_layer_cfd = []
+            teacher_centroids_dicts.append(teacher_centroids)
+            # 多层时建议做“加权平均或拼接后再算 CFD”
+            for layer_key in local_centroids_dict:
+                cfd = _cfd_distance(
+                    local_centroids_dict[layer_key].detach().float(),
+                    teacher_centroids[layer_key].detach().float()
+                )
+                per_layer_cfd.append(cfd)
+            cfd_matrix.append(per_layer_cfd)
+        cfd_matrix_tensor = torch.tensor(cfd_matrix, dtype=torch.float)
+        cfd_scores = torch.mean(cfd_matrix_tensor, dim=1)
 
-        self.teacher_info_list = teacher_info_list
+        # 归一化为权重
+        cfd_tensor = torch.tensor(cfd_scores, dtype=torch.float)
+        min_val = cfd_tensor.min()
+        max_val = cfd_tensor.max()
+        normed = (cfd_tensor - min_val) / (max_val - min_val + 1e-8)
+
+        beta = 2 # 可调节的“温度”参数，控制softmax分布
+        alphas = torch.softmax(-beta * normed, dim=0)
+        # 存储
+        self.teacher_info_list = [
+            {
+                'centroids': teacher_centroids_dicts[i],
+                'alpha': alphas[i].item()
+            }
+            for i in range(len(teacher_centroids_dicts))
+        ]
 
     def _prune_model_weights(self):
         pruned_state_dict = {}
@@ -123,6 +134,9 @@ class DFedCADClient(Client):
         return difference_dict
 
     def _compute_alignment_loss(self):
+        if len(self.teacher_info_list) == 0:
+            return torch.zeros((), device=self.device)
+
         losses = []
         # 多教师质心 & labels 都在 self.teacher_info_list
         for layer_key, dkm in self.dkm_layers.items():
@@ -154,9 +168,44 @@ class DFedCADClient(Client):
         else:
             return torch.zeros((), device=self.device)
 
+    def _local_train(self):
+        ref_momentum = self._compute_global_local_model_difference()
+
+        self.model.train()
+
+        exponential_average_loss = None
+        alpha = 0.5
+
+        for batch_idx, (x, labels) in enumerate(self.client_train_loader):
+            self.model.load_state_dict(self._prune_model_weights())
+
+            x, labels = x.to(self.device), labels.to(self.device)
+            self.optimizer.zero_grad()
+            outputs = self.model(x)
+            loss_sup = self.criterion(outputs, labels).mean()
+
+            loss_align = self._compute_alignment_loss()
+
+            loss_final = loss_sup + self.lambda_alignment * loss_align
+            loss_final.backward()
+
+            if exponential_average_loss is None:
+                exponential_average_loss = loss_final.item()
+            else:
+                exponential_average_loss = alpha * loss_final.item() + (1 - alpha) * exponential_average_loss
+
+            if loss_final.item() < exponential_average_loss:
+                decay_factor = min(self.base_decay_rate ** (batch_idx + 1) * 1.1, 0.8)
+            else:
+                decay_factor = max(self.base_decay_rate ** (batch_idx + 1) / 1.1, 0.1)
+
+            for name, param in self.model.named_parameters():
+                if name in ref_momentum:
+                    param.grad += decay_factor * ref_momentum[name]
+            self.optimizer.step()
+
     def aggregate(self):
         self.global_model.load_state_dict(self._weight_aggregation())
-        self.neighbor_model_weights.clear()
 
 
     def set_init_model(self, model):
@@ -167,48 +216,17 @@ class DFedCADClient(Client):
     def train(self):
         if self.is_align and len(self.dkm_layers) == 0:
             self._register_dkm_layers()
+            self._local_train()
 
-        if self.neighbor_model_weights and self.is_align:
+        if self.is_align:
             self._all_teacher_info()
             self.aggregate()
 
         for epoch in range(self.epochs):
-            ref_momentum = self._compute_global_local_model_difference()
-
-            self.model.train()
-
-            exponential_average_loss = None
-            alpha = 0.5
-
-            for batch_idx, (x, labels) in enumerate(self.client_train_loader):
-                self.model.load_state_dict(self._prune_model_weights())
-
-                x, labels = x.to(self.device), labels.to(self.device)
-                self.optimizer.zero_grad()
-                outputs = self.model(x)
-                loss_sup = self.criterion(outputs, labels).mean()
-
-                loss_align = self._compute_alignment_loss()
-
-                loss_final = loss_sup + self.lambda_alignment * loss_align
-                loss_final.backward()
-
-                if exponential_average_loss is None:
-                    exponential_average_loss = loss_final.item()
-                else:
-                    exponential_average_loss = alpha * loss_final.item() + (1 - alpha) * exponential_average_loss
-
-                if loss_final.item() < exponential_average_loss:
-                    decay_factor = min(self.base_decay_rate ** (batch_idx + 1) * 1.1, 0.8)
-                else:
-                    decay_factor = max(self.base_decay_rate ** (batch_idx + 1) / 1.1, 0.1)
-
-                for name, param in self.model.named_parameters():
-                    if name in ref_momentum:
-                        param.grad += decay_factor * ref_momentum[name]
-                self.optimizer.step()
+            self._local_train()
 
         self.cluster_model = self._cluster_and_prune_model_weights()
+        self.neighbor_model_weights.clear()
 
     def send_model(self):
         return self.cluster_model
