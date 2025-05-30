@@ -27,9 +27,9 @@ def _cfd_distance(centroids_a, centroids_b, n_freqs=512, sigma=1.0):
 class DFedCADClient(Client):
     def __init__(self, client_id, dataset_index, full_dataset, hyperparam, device):
         super().__init__(client_id, dataset_index, full_dataset, hyperparam, device)
-        self.lambda_alignment = hyperparam['lambda_alignment'] if 'lambda_alignment' in hyperparam else 0.1
-        self.n_clusters = hyperparam['n_clusters'] if 'n_clusters' in hyperparam else 16
-        self.base_decay_rate = hyperparam['base_decay_rate'] if 'base_decay_rate' in hyperparam else 0.5
+        self.lambda_alignment = hyperparam.get('lambda_alignment', 0.1)
+        self.n_clusters = hyperparam.get('n_clusters', 16)
+        self.base_decay_rate = hyperparam.get('base_decay_rate', 0.5)
 
         self.teacher_info_list = []
         self.dkm_layers = {}

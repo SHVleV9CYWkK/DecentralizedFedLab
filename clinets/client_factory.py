@@ -22,6 +22,7 @@ def create_client(num_client, args, dataset_index, full_dataset, device):
         train_hyperparam['lambda_kd'] = args.lambda_kd
         train_hyperparam['n_clusters'] = args.n_clusters
         train_hyperparam['lambda_alignment'] = args.lambda_alignment
+        train_hyperparam['base_decay_rate'] = args.base_decay_rate
     elif "dfedmtkdrl" == fl_type:
         client_class = DFedMTKDRLClient
         train_hyperparam['lambda_kd'] = args.lambda_kd
