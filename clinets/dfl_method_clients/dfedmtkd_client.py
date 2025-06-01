@@ -79,6 +79,8 @@ class DFedMTKDClient(Client):
                 loss.backward()
                 self.optimizer.step()
 
+        self.neighbor_model_weights.clear()
+
     def send_model(self):
         return self.model.state_dict()
 

@@ -274,3 +274,5 @@ class DFedMTKDRLClient(DFedMTKDClient):
                 self.agent_optimizer.zero_grad(set_to_none=True)
                 policy_loss.backward()
                 self.agent_optimizer.step()
+
+        self.neighbor_model_weights.clear()
