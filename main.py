@@ -37,7 +37,7 @@ def execute_fed_process(coordinator, args, today_date, exper_num):
         print(f"Round {r}")
         start_time = time.time()
         coordinator.train_client(r)
-        coordinator.interchange_model(r)
+        coordinator.interchange_model_method(r)
         overall_results, client_results = coordinator.evaluate_client()
         end_time = time.time()
 
@@ -74,6 +74,9 @@ def execute_experiment(args, device, exper_num, today_date, logger):
     logger.save("client_delay", client_delay)
 
     coordinator = Coordinator(clients, model, device, client_delay, args)
+
+    if args.fl_method == "dfedpgp":
+        coordinator.interchange_model_method = coordinator.interchange_model_dfedpgp
 
     execute_fed_process(coordinator, args, today_date, exper_num)
 

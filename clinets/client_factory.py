@@ -2,6 +2,7 @@ from clinets.dfl_method_clients.dfedavg_client import DFedAvgClient
 from clinets.dfl_method_clients.dfedcad_client import DFedCADClient
 from clinets.dfl_method_clients.dfedmtkd_client import DFedMTKDClient
 from clinets.dfl_method_clients.dfedmtkdrl_client import DFedMTKDRLClient
+from clinets.dfl_method_clients.dfedpgp import DFedPGPClient
 
 
 def create_client(num_client, args, dataset_index, full_dataset, device):
@@ -29,6 +30,8 @@ def create_client(num_client, args, dataset_index, full_dataset, device):
     elif "dfedmtkd" == fl_type:
         client_class = DFedMTKDClient
         train_hyperparam['lambda_kd'] = args.lambda_kd
+    elif "dfedpgp" == fl_type:
+        client_class = DFedPGPClient
 
     else:
         raise NotImplementedError(f'Invalid Federated learning method name: {fl_type}')
