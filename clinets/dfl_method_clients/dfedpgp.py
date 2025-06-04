@@ -51,11 +51,11 @@ class DFedPGPClient(Client):
 
     def train(self):
         self.model.train()
+        self._load_weights_to_model(shared=self.z)
 
-        for _ in range(self.Kv):  # update personal part
+        for epoch in range(self.epochs):
             for x, labels in self.client_train_loader:
                 x, labels = x.to(self.device), labels.to(self.device)
-                self._load_weights_to_model(shared=self.z, personal=self.v)
                 self.optimizer.zero_grad()
                 outputs = self.model(x)
                 loss = self.criterion(outputs, labels).mean()
@@ -63,25 +63,11 @@ class DFedPGPClient(Client):
                 self.optimizer.step()
                 self.v = {k: v.clone().detach() for k, v in self.model.state_dict().items() if k in self.personal_keys}
 
-        for _ in range(self.Ku):  # update shared part (biased)
-            for x, labels in self.client_train_loader:
-                x, labels = x.to(self.device), labels.to(self.device)
-                self._load_weights_to_model(shared=self.z, personal=self.v)
-                self.optimizer.zero_grad()
-                outputs = self.model(x)
-                loss = self.criterion(outputs, labels).mean()
-                loss.backward()
-                self.optimizer.step()
-                self.u = {k: v.clone().detach() for k, v in self.model.state_dict().items() if k in self.shared_keys}
-                self.z = {k: self.u[k] / self.mu for k in self.u}
-
-    def _load_weights_to_model(self, shared, personal):
+    def _load_weights_to_model(self, shared):
         state_dict = self.model.state_dict()
         for k in self.shared_keys:
             state_dict[k] = shared[k].clone()
-        for k in self.personal_keys:
-            state_dict[k] = personal[k].clone()
-        self.model.load_state_dict(state_dict, strict=False)
+        self.model.load_state_dict(state_dict)
 
     def send_model(self):
         return {k: self.u[k] * 1.0 for k in self.shared_keys}, self.mu
