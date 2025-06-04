@@ -18,7 +18,7 @@ def create_client(num_client, args, dataset_index, full_dataset, device):
     fl_type = args.fl_method
     if fl_type == "dfedavg":
         client_class = DFedAvgClient
-    elif "dfedcad" == fl_type:
+    elif "dfedcad" in fl_type:
         client_class = DFedCADClient
         train_hyperparam['lambda_kd'] = args.lambda_kd
         train_hyperparam['n_clusters'] = args.n_clusters
