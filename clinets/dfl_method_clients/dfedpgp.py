@@ -20,14 +20,34 @@ class DFedPGPClient(Client):
 
     def set_init_model(self, model):
         self.model = deepcopy(model)
-        all_keys = list(model.state_dict().keys())
-        self.shared_keys = [k for k in all_keys if "shared" in k]
-        self.personal_keys = [k for k in all_keys if "personal" in k or "classifier" in k]
+        self.model.to(self.device)
 
-        # Initial biased model (u): full state dict with only shared params
-        self.u = {k: v.clone().detach().to(self.device) for k, v in self.model.state_dict().items() if k in self.shared_keys}
-        self.z = {k: v.clone().detach().to(self.device) for k, v in self.u.items()}
-        self.v = {k: v.clone().detach().to(self.device) for k, v in self.model.state_dict().items() if k in self.personal_keys}
+        state_dict = self.model.state_dict()
+        module_names = list(self.model.named_modules())
+
+        # 找到第一个出现 Linear 的模块名位置
+        linear_start_index = None
+        for i, (name, module) in enumerate(module_names):
+            if isinstance(module, torch.nn.Linear):
+                linear_start_index = i
+                break
+
+        if linear_start_index is None:
+            raise ValueError("Cannot find any Linear layers for personalization.")
+
+        # 从第一个 Linear 开始，所有后续模块名都当作个性化部分
+        personal_prefixes = [name for name, _ in module_names[linear_start_index:] if name != '']
+
+        # 标记哪些 state_dict 的 key 属于个人化
+        self.personal_keys = [
+            k for k in state_dict.keys()
+            if any(k.startswith(prefix) for prefix in personal_prefixes)
+        ]
+        self.shared_keys = [k for k in state_dict.keys() if k not in self.personal_keys]
+
+        self.u = {k: state_dict[k].clone().detach().to(self.device) for k in self.shared_keys}
+        self.z = {k: v.clone() for k, v in self.u.items()}
+        self.v = {k: state_dict[k].clone().detach().to(self.device) for k in self.personal_keys}
 
     def train(self):
         self.model.train()

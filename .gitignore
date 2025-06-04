@@ -12,5 +12,5 @@ __pycache__
 *.h5
 logs_server/
 grid_search_results.txt
-visualize_results.ipynb
+*.ipynb
 __pycache__
