@@ -77,7 +77,7 @@ class DFedPGPClient(Client):
             return
 
         # Push-sum aggregation
-        aggregated_u = {k: torch.zeros_like(v) for k, v in self.u.items()}
+        aggregated_u = {k: torch.zeros_like(v, dtype=torch.float32) for k, v in self.u.items()}
         aggregated_mu = 0.0
 
         for u_j, mu_j in self.neighbor_model_weights:
