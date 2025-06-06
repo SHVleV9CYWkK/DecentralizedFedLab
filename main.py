@@ -8,7 +8,7 @@ import torch
 import logging
 logging.getLogger().setLevel(logging.ERROR)
 
-from clinets.client_factory import create_client
+from clients.client_factory import create_client
 from coordinator import Coordinator
 from utils.args import parse_args
 from utils.experiment_logger import ExperimentLogger

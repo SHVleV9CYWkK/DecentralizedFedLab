@@ -14,3 +14,4 @@ logs_server/
 grid_search_results.txt
 *.ipynb
 __pycache__
+visualization/

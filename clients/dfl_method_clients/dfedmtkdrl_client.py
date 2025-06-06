@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from clinets.dfl_method_clients.dfedmtkd_client import DFedMTKDClient   # ← 已优化的父类
+from clients.dfl_method_clients.dfedmtkd_client import DFedMTKDClient   # ← 已优化的父类
 
 
 # ------------------------ 工具函数 ------------------------

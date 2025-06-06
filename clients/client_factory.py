@@ -1,8 +1,8 @@
-from clinets.dfl_method_clients.dfedavg_client import DFedAvgClient
-from clinets.dfl_method_clients.dfedcad_client import DFedCADClient
-from clinets.dfl_method_clients.dfedmtkd_client import DFedMTKDClient
-from clinets.dfl_method_clients.dfedmtkdrl_client import DFedMTKDRLClient
-from clinets.dfl_method_clients.dfedpgp import DFedPGPClient
+from clients.dfl_method_clients.dfedavg_client import DFedAvgClient
+from clients.dfl_method_clients.dfedcad_client import DFedCADClient
+from clients.dfl_method_clients.dfedmtkd_client import DFedMTKDClient
+from clients.dfl_method_clients.dfedmtkdrl_client import DFedMTKDRLClient
+from clients.dfl_method_clients.dfedpgp import DFedPGPClient
 
 
 def create_client(num_client, args, dataset_index, full_dataset, device):

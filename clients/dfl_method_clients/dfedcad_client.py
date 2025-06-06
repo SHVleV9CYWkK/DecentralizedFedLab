@@ -2,7 +2,7 @@ from copy import deepcopy
 
 import torch
 import torch.nn.functional as F
-from clinets.client import Client
+from clients.client import Client
 from models.dkm import MultiTeacherDKMLayer
 from utils.kmeans import TorchKMeans
 

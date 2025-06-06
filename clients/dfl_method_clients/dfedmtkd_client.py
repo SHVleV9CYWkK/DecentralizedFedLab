@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from clinets.client import Client
+from clients.client import Client
 
 
 def find_last_linear_and_prev(model):
