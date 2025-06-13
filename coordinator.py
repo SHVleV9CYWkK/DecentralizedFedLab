@@ -41,6 +41,8 @@ class Coordinator:
             except RuntimeError as e:
                 print("Start method 'spawn' already set or error setting it: ", str(e))
 
+        self.interchange_model_method = self.interchange_model
+
     def _init_clients(self):
         print("Initializing initial clients...")
         pbar = tqdm(total=len(self.participated_training_clients))
@@ -206,9 +208,6 @@ class Coordinator:
         self._clients_train()
 
     def interchange_model(self, current_round):
-        for client in self.all_clients:
-            client.neighbor_model_weights.clear()
-
         self.generate_connected_graph()
         pre_add_clients = []
         for i in range(self.num_clients):
@@ -232,6 +231,61 @@ class Coordinator:
                 client_j = self.all_clients[j]
                 if self.connected_graph[client_i.id][client_j.id]:
                     client_i.receive_neighbor_model(client_j.send_model())
+
+        print("Aggregating model weights...")
+        for client in self.participated_training_clients:
+            client.aggregate()
+
+    def interchange_model_dfedpgp(self, current_round):
+        self.generate_connected_graph()
+
+        out_degree = [sum(row) for row in self.connected_graph]
+
+        pre_add_clients = []
+        for i in range(self.num_clients):
+            if i in self.client_delay_dict and current_round + 1 == self.client_delay_dict[i]:
+                pre_add_clients.append(i)
+
+        for i in range(self.num_clients):
+            if i in self.client_delay_dict and current_round < self.client_delay_dict[i]:
+                continue
+
+            sender = self.all_clients[i]
+            u_i, mu_i = sender.send_model()
+            deg_i = out_degree[i]
+
+            if deg_i == 0:
+                continue
+
+            weight_ij = 1.0 / deg_i
+
+            for j in range(self.num_clients):
+                if not self.connected_graph[i][j]:
+                    continue
+
+                if j in self.client_delay_dict and current_round < self.client_delay_dict[j]:
+                    continue
+
+                receiver = self.all_clients[j]
+
+                weighted_u = {k: v * weight_ij for k, v in u_i.items()}
+                weighted_mu = mu_i * weight_ij
+                receiver.receive_neighbor_model((weighted_u, weighted_mu))
+
+        for i in pre_add_clients:
+            receiver = self.all_clients[i]
+            deg_i = out_degree[i] or 1
+            w = 1.0 / deg_i
+
+            for j in range(self.num_clients):
+                if self.connected_graph[i][j]:
+                    sender = self.all_clients[j]
+                    if getattr(sender, "u", None) is None:
+                        continue
+                    u_j, mu_j = sender.send_model()
+                    weighted_u = {k: v * w for k, v in u_j.items()}
+                    weighted_mu = mu_j * w
+                    receiver.receive_neighbor_model((weighted_u, weighted_mu))
 
         print("Aggregating model weights...")
         for client in self.participated_training_clients:

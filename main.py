@@ -1,12 +1,14 @@
 import random
 import time
 from datetime import datetime
+from multiprocessing import Queue, Process
+
 import numpy as np
 import torch
 import logging
 logging.getLogger().setLevel(logging.ERROR)
 
-from clinets.client_factory import create_client
+from clients.client_factory import create_client
 from coordinator import Coordinator
 from utils.args import parse_args
 from utils.experiment_logger import ExperimentLogger
@@ -14,14 +16,32 @@ from utils.utils import load_model, load_dataset, get_client_data_indices, \
     get_client_delay_info, save_log, get_experiment_num
 
 
+def log_worker(queue):
+    while True:
+        item = queue.get()
+        if item == "STOP":
+            break
+
+        overall_results, client_results, date, exper_num, round_num, args = item
+        save_log(overall_results, date, exper_num, round_num, args)
+
+        for client_id, client_result in client_results.items():
+            save_log(client_result, date, exper_num, round_num, args, client_id)
+
 def execute_fed_process(coordinator, args, today_date, exper_num):
+    log_queue = Queue()
+    log_process = Process(target=log_worker, args=(log_queue,))
+    log_process.start()
+
     for r in range(args.n_rounds):
         print(f"Round {r}")
         start_time = time.time()
         coordinator.train_client(r)
-        coordinator.interchange_model(r)
+        coordinator.interchange_model_method(r)
         overall_results, client_results = coordinator.evaluate_client()
         end_time = time.time()
+
+        log_queue.put((overall_results, client_results, today_date, exper_num, r, args))
 
         eval_results_str = ', '.join([f"{metric.capitalize()}: {value:.4f}" for metric, value in overall_results.items()])
         print(f"Training time: {(end_time - start_time):.2f}. Evaluation Results: {eval_results_str}")
@@ -33,11 +53,11 @@ def execute_fed_process(coordinator, args, today_date, exper_num):
         min_cid = min(client_results, key=lambda cid: client_results[cid]["accuracy"])
         print(f"Client Accuracy — Max: {max_acc:.4f} (Client {max_cid}), Min: {min_acc:.4f} (Client {min_cid})")
 
-        save_log(overall_results, today_date, exper_num, r, args)
-        for client_id, client_result in client_results.items():
-            save_log(client_result, today_date, exper_num, r, args, client_id)
         coordinator.lr_scheduler()
         print(f"------------")
+
+    log_queue.put("STOP")
+    log_process.join()
 
 
 def execute_experiment(args, device, exper_num, today_date, logger):
@@ -54,6 +74,9 @@ def execute_experiment(args, device, exper_num, today_date, logger):
     logger.save("client_delay", client_delay)
 
     coordinator = Coordinator(clients, model, device, client_delay, args)
+
+    if args.fl_method == "dfedpgp":
+        coordinator.interchange_model_method = coordinator.interchange_model_dfedpgp
 
     execute_fed_process(coordinator, args, today_date, exper_num)
 

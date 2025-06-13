@@ -1,7 +1,9 @@
-from clinets.dfl_method_clients.dfedavg_client import DFedAvgClient
-from clinets.dfl_method_clients.dfedcad_client import DFedCADClient
-from clinets.dfl_method_clients.dfedmtkd_client import DFedMTKDClient
-from clinets.dfl_method_clients.dfedmtkdrl_client import DFedMTKDRLClient
+from clients.dfl_method_clients.dfedavg_client import DFedAvgClient
+from clients.dfl_method_clients.dfedcad_client import DFedCADClient
+from clients.dfl_method_clients.dfedmtkd_client import DFedMTKDClient
+from clients.dfl_method_clients.dfedmtkdrl_client import DFedMTKDRLClient
+from clients.dfl_method_clients.dfedpgp import DFedPGPClient
+from clients.dfl_method_clients.dfedsam import DFedSAMClient
 
 
 def create_client(num_client, args, dataset_index, full_dataset, device):
@@ -17,17 +19,23 @@ def create_client(num_client, args, dataset_index, full_dataset, device):
     fl_type = args.fl_method
     if fl_type == "dfedavg":
         client_class = DFedAvgClient
-    elif "dfedcad" == fl_type:
+    elif "dfedcad" in fl_type:
         client_class = DFedCADClient
         train_hyperparam['lambda_kd'] = args.lambda_kd
         train_hyperparam['n_clusters'] = args.n_clusters
         train_hyperparam['lambda_alignment'] = args.lambda_alignment
+        train_hyperparam['base_decay_rate'] = args.base_decay_rate
     elif "dfedmtkdrl" == fl_type:
         client_class = DFedMTKDRLClient
         train_hyperparam['lambda_kd'] = args.lambda_kd
     elif "dfedmtkd" == fl_type:
         client_class = DFedMTKDClient
         train_hyperparam['lambda_kd'] = args.lambda_kd
+    elif "dfedpgp" == fl_type:
+        client_class = DFedPGPClient
+    elif "dfedsam" == fl_type:
+        client_class = DFedSAMClient
+        train_hyperparam['rho'] = args.rho
 
     else:
         raise NotImplementedError(f'Invalid Federated learning method name: {fl_type}')

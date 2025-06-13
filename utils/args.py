@@ -48,7 +48,7 @@ def parse_args_for_visualization():
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--fl_method', type=str, default='dfedavg', choices=['dfedavg', 'dfedcad', 'dfedmtkd', 'dfedmtkdrl'], help='Decentralized federated learning method')
+    parser.add_argument('--fl_method', type=str, default='dfedavg', choices=['dfedavg', 'dfedcad', 'dfedmtkd', 'dfedmtkdrl', 'dfedpgp', 'dfedsam'], help='Decentralized federated learning method')
     parser.add_argument('--dataset_name', type=str, default='emnist', choices=['cifar10', 'cifar100', 'emnist', 'mnist', 'tiny_imagenet'],
                         help='dataset name')
     parser.add_argument('--alpha', type=float, default=0.4, help='The alpha of the dataset, which is used to select the dataset')
@@ -75,6 +75,7 @@ def parse_args():
     parser.add_argument('--lambda_alignment', type=float, default=0.1, help='Alignment strength')
     parser.add_argument('--lambda_feature_kd', type=float, default=0.1, help='Distillation strength acting on feature parts')
     parser.add_argument('--n_job', type=int, default=1, help='The number of processes that execute client training in parallel in the server')
+    parser.add_argument('--rho', type=float, default=0.05, help='Sharpness-Aware Minimization radius of DFedSAM')
     parser.add_argument('--seed', type=int, default=42, help='random seed')
     parser.add_argument('--log_dir', type=str, default='logs', help='log directory')
     parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda', 'mps'],

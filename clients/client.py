@@ -110,9 +110,9 @@ class Client(ABC):
         f1 = metrics.multiclass_f1_score(all_predictions, all_labels, average="weighted", num_classes=self.num_classes)
         self.last_accuracy = accuracy
         return {
-            'loss': avg_loss,
-            'accuracy': accuracy.item(),
-            'precision': precision.item(),
-            'recall': recall.item(),
-            'f1': f1.item()
+            'loss': avg_loss.cpu(),
+            'accuracy': accuracy.cpu().item(),
+            'precision': precision.cpu().item(),
+            'recall': recall.cpu().item(),
+            'f1': f1.cpu().item()
         }

@@ -1,6 +1,6 @@
 from copy import deepcopy
 
-from clinets.client import Client
+from clients.client import Client
 
 class DFedAvgClient(Client):
     def __init__(self, client_id, dataset_index, full_dataset, hyperparam, device):

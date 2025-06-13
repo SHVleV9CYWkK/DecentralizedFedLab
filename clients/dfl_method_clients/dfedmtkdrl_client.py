@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from clinets.dfl_method_clients.dfedmtkd_client import DFedMTKDClient   # ← 已优化的父类
+from clients.dfl_method_clients.dfedmtkd_client import DFedMTKDClient   # ← 已优化的父类
 
 
 # ------------------------ 工具函数 ------------------------
@@ -274,3 +274,5 @@ class DFedMTKDRLClient(DFedMTKDClient):
                 self.agent_optimizer.zero_grad(set_to_none=True)
                 policy_loss.backward()
                 self.agent_optimizer.step()
+
+        self.neighbor_model_weights.clear()
