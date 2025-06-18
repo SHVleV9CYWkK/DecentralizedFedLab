@@ -3,8 +3,9 @@ from clients.dfl_method_clients.dfedcad_client import DFedCADClient
 from clients.dfl_method_clients.dfedmtkd_client import DFedMTKDClient
 from clients.dfl_method_clients.dfedmtkdrl_client import DFedMTKDRLClient
 from clients.dfl_method_clients.dfedpgp_clent import DFedPGPClient
-from clients.dfl_method_clients.dfedsam_clent import DFedSAMClient
-from clients.dfl_method_clients.fedgo_clent import FedGOClient
+from clients.dfl_method_clients.dfedsam_client import DFedSAMClient
+from clients.dfl_method_clients.fedgo_client import FedGOClient
+from clients.dfl_method_clients.qfedcg_client import QFedCGClient
 
 
 def create_client(num_client, args, dataset_index, full_dataset, device):
@@ -40,6 +41,8 @@ def create_client(num_client, args, dataset_index, full_dataset, device):
     elif "fedgo" == fl_type:
         client_class = FedGOClient
         train_hyperparam['lambda_kd'] = args.lambda_kd
+    elif "qfedcg" == fl_type:
+        client_class = QFedCGClient
 
     else:
         raise NotImplementedError(f'Invalid Federated learning method name: {fl_type}')
