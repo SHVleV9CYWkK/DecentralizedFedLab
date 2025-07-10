@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from copy import deepcopy
 from typing import List, Optional
 
@@ -10,19 +12,25 @@ from clients.client import Client
 def _log_softmax_tau(logits: torch.Tensor, tau: float) -> torch.Tensor:
     return F.log_softmax(logits / tau, dim=-1)
 
-
 def _softmax_tau(logits: torch.Tensor, tau: float) -> torch.Tensor:
     return F.softmax(logits / tau, dim=-1)
 
-
-def _kl_divergence(student_logits: torch.Tensor,
-                   teacher_logits: torch.Tensor,
+def _kl_divergence(student: torch.Tensor,
+                   teacher: torch.Tensor,
                    tau: float) -> torch.Tensor:
-    log_ps = _log_softmax_tau(student_logits, tau)  # log‑prob student
+    """KL(teacher ‖ student) with temperature scaling."""
+    log_ps = _log_softmax_tau(student, tau)
     with torch.no_grad():
-        pt = _softmax_tau(teacher_logits, tau)      # prob teacher
+        pt = _softmax_tau(teacher, tau)
     return F.kl_div(log_ps, pt, reduction="batchmean") * (tau ** 2)
 
+def _z_score(feat: torch.Tensor) -> torch.Tensor:
+    mu = feat.mean(dim=-1, keepdim=True)
+    std = feat.std(dim=-1, keepdim=True) + 1e-6
+    return (feat - mu) / std
+
+
+# -------------------- Main Class -------------------- #
 class ReTFHDClient(Client):
 
     def __init__(self,
@@ -33,91 +41,96 @@ class ReTFHDClient(Client):
                  device):
         super().__init__(client_id, dataset_index, full_dataset, hyperparam, device)
 
-        self.is_delayed: bool = False
-        self._teacher_model: Optional[nn.Module] = None
-
-        self._cat_tau = torch.ones(self.num_classes, device=device)
-
-        self._base_tau: float = hyperparam.get("tau", 2.0)
-        self._elastic_gamma: float = hyperparam.get("gamma", 1.0)
-
-        self._hook_handles = []
-
-    def init_client(self):
-        super().init_client()
-        if len(self.neighbor_model_weights) != 0:
-            self.is_delayed = True
-            self.aggregate()
-
-    def aggregate(self):
-        if not self.neighbor_model_weights:
-            return
-        aggregated_state = self._weight_aggregation()
-
-        if self.is_delayed:
-            if self._teacher_model is None:
-                self._teacher_model = deepcopy(self.model).to(self.device)
-                for p in self._teacher_model.parameters():
-                    p.requires_grad_(False)
-            self._teacher_model.load_state_dict(aggregated_state, strict=True)
-        else:
-            # FedAvg path
-            self.model.load_state_dict(aggregated_state, strict=True)
-
-    def train(self):
-        if self.is_delayed and self._teacher_model is not None:
-            self._kd_train()
-        else:
-            self._local_train()
-        self.neighbor_model_weights.clear()
+        self.neighbor_logits: List[torch.Tensor] = []
+        self.class_logits: Optional[torch.Tensor] = None
+        self.global_teacher_logits: Optional[torch.Tensor] = None
+        self.base_tau: float = hyperparam.get("tau", 2.0)
+        self.elastic_gamma: float = hyperparam.get("gamma", 1.0)
+        self.cat_tau = torch.ones(self.num_classes, device=device)
 
     def send_model(self):
-        return self.model.state_dict()
+        # returns (C, C) tensor of per-class averaged logits
+        if self.class_logits is None:
+            return torch.zeros(self.num_classes, self.num_classes)
+        return self.class_logits.clone().cpu()
 
     def set_init_model(self, model):
         self.model = deepcopy(model)
-        if (not self.is_delayed) and self.neighbor_model_weights:
+        if len(self.neighbor_model_weights) != 0:
             self.aggregate()
 
-    def _kd_train(self):
-        self.model.train()
-        self._teacher_model.eval()
+    def receive_neighbor_model(self, logits_tensor):
+        # collect neighbors' logits
+        self.neighbor_logits.append(logits_tensor.to(self.device))
 
+    def aggregate(self):
+        if not self.neighbor_logits:
+            return
+        self.global_teacher_logits = torch.stack(self.neighbor_logits).mean(dim=0)
+        self.neighbor_logits.clear()
+
+    def train(self):
+        if self.global_teacher_logits is not None:
+            self._kd_train()
+        else:
+            self._local_train()
+        self.class_logits = self._compute_class_logits()
+
+    def _compute_class_logits(self) -> torch.Tensor:
+        self.model.eval()
+        agg = torch.zeros(self.num_classes, self.num_classes, device=self.device)
+        cnt = torch.zeros(self.num_classes, device=self.device)
+        with torch.no_grad():
+            for x, y in self.client_train_loader:
+                x, y = x.to(self.device), y.to(self.device)
+                out = self.model(x)  # (B, C)
+                for c in range(self.num_classes):
+                    mask = (y == c)
+                    if mask.any():
+                        agg[c] += out[mask].mean(dim=0)
+                        cnt[c] += 1
+        cnt = torch.where(cnt == 0, torch.ones_like(cnt), cnt)
+        return agg / cnt.unsqueeze(1)
+
+    def _kd_train(self):
+        if not hasattr(self, "proj_heads"):
+            self.proj_heads = nn.ModuleDict().to(self.device)
+
+        def _z_score(t: torch.Tensor) -> torch.Tensor:
+            mu = t.mean(dim=1, keepdim=True)
+            var = t.var(dim=1, unbiased=False, keepdim=True) + 1e-6
+            return (t - mu) / var.sqrt()
+
+        self.model.train()
         for _ in range(self.epochs):
             for x, y in self.client_train_loader:
                 x, y = x.to(self.device), y.to(self.device)
 
-                with torch.no_grad():
-                    teacher_feats = self._forward_with_intermediate(self._teacher_model, x, detach=True)
                 student_feats = self._forward_with_intermediate(self.model, x, detach=False)
+
+                teacher_logits = self.global_teacher_logits[y]
 
                 ce_loss = self.criterion(student_feats[-1], y).mean()
 
+                kd_loss = torch.zeros(1, device=self.device)
                 with torch.no_grad():
-                    batch_ce = F.cross_entropy(teacher_feats[-1], y, reduction="none")
-                    class_ce = torch.zeros_like(self._cat_tau)
-                    for c in range(self.num_classes):
-                        mask = y == c
-                        if mask.any():
-                            class_ce[c] = batch_ce[mask].mean()
-                    global_mean = class_ce[class_ce > 0].mean()
-                    diff = class_ce - global_mean
-                    beta = 0.05
-                    self._cat_tau = torch.clamp(self._cat_tau - beta * diff, 0.5, 5.0)
+                    z_t = _z_score(teacher_logits)
 
-                L = min(len(student_feats), len(teacher_feats))
-                kd_loss = 0.0
-                for l in range(L):
-                    cat_tau = self._cat_tau[y].mean().item()
-                    tau_l = (self._base_tau + self._elastic_gamma * l / (L - 1 + 1e-6)) * cat_tau
+                for idx, feat in enumerate(student_feats):
+                    feat_flat = feat
+                    if feat_flat.dim() > 2:
+                        feat_flat = torch.flatten(feat_flat, 1)
+                    lname = f"layer{idx}"
+                    if lname not in self.proj_heads:
+                        self.proj_heads[lname] = nn.Linear(feat_flat.size(1), self.num_classes).to(self.device)
+                    s_logits = self.proj_heads[lname](feat_flat)
 
-                    s_feat = student_feats[l]
-                    t_feat = teacher_feats[l]
+                    # Z‑Score
+                    z_s = _z_score(s_logits)
+                    delta_z = (z_t - z_s).abs().mean()
+                    tau_l = max(self.base_tau * (1 + self.elastic_gamma * delta_z.item()), 1e-3)
 
-                    if s_feat.dim() > 2:
-                        s_feat = torch.flatten(s_feat, start_dim=1)
-                        t_feat = torch.flatten(t_feat, start_dim=1)
-                    kd_loss = kd_loss + _kl_divergence(s_feat, t_feat, tau_l)
+                    kd_loss = kd_loss + _kl_divergence(s_logits, teacher_logits, tau_l)
 
                 loss = ce_loss + kd_loss
 
@@ -128,21 +141,18 @@ class ReTFHDClient(Client):
     @staticmethod
     def _forward_with_intermediate(model: nn.Module, x: torch.Tensor, *, detach: bool = False) -> List[torch.Tensor]:
         feats: List[torch.Tensor] = []
-        hooks = []
-
+        hooks: List = []
         def _make_hook(store):
             def fn(_mod, _inp, out):
                 store.append(out.detach() if detach else out)
             return fn
-
         for n, m in model.named_modules():
-            if n and hasattr(m, "weight") and m.weight is not None and "bn" not in n and "downsample" not in n:
+            if n and hasattr(m, 'weight') and m.weight is not None \
+               and 'bn' not in n and 'downsample' not in n:
                 hooks.append(m.register_forward_hook(_make_hook(feats)))
-
-        logits = model(x)
-
+        _ = model(x)
         for h in hooks:
             h.remove()
-
-        feats.append(logits.detach() if detach else logits)
+        out = model(x)
+        feats.append(out.detach() if detach else out)
         return feats
