@@ -56,6 +56,9 @@ class ReTFHDClient(Client):
 
     def set_init_model(self, model):
         self.model = deepcopy(model)
+        for layer in self.model.modules():
+            if hasattr(layer, 'reset_parameters'):
+                layer.reset_parameters()
         if len(self.neighbor_model_weights) != 0:
             self.aggregate()
 
@@ -148,7 +151,7 @@ class ReTFHDClient(Client):
             return fn
         for n, m in model.named_modules():
             if n and hasattr(m, 'weight') and m.weight is not None \
-               and 'bn' not in n and 'downsample' not in n:
+               and 'bn' not in n and 'downsample' not in n and 'conv' not in n:
                 hooks.append(m.register_forward_hook(_make_hook(feats)))
         _ = model(x)
         for h in hooks:
