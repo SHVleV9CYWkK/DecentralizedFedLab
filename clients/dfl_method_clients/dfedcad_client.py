@@ -107,9 +107,10 @@ class DFedCADClient(Client):
                 flattened_weights = weight.detach().view(-1, 1)
                 kmeans.fit(flattened_weights)
                 new_weights = kmeans.centroids[kmeans.labels_].view(original_shape)
-                clustered_state_dict[key] = new_weights.clone()
-                centroids_dict[key] = kmeans.centroids.clone()
-                labels_dict[key] = kmeans.labels_.clone()
+                is_zero_centroid = (kmeans.centroids == 0).view(-1)
+                mask = is_zero_centroid[kmeans.labels_].view(original_shape) == 0
+                mask_dict[key] = mask.bool()
+                clustered_state_dict[key] = new_weights
             else:
                 clustered_state_dict[key] = weight
                 mask_dict[key] = torch.ones_like(weight, dtype=torch.bool)
