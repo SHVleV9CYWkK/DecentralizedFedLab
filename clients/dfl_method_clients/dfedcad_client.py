@@ -30,6 +30,7 @@ class DFedCADClient(Client):
         self.lambda_alignment = hyperparam.get('lambda_alignment', 0.1)
         self.n_clusters = hyperparam.get('n_clusters', 16)
         self.base_decay_rate = hyperparam.get('base_decay_rate', 0.5)
+        self.is_cfd = hyperparam.get('is_cfd', True)
 
         self.teacher_info_list = []
         self.dkm_layers = {}
@@ -52,6 +53,21 @@ class DFedCADClient(Client):
         _, local_centroids_dict, _ = self._cluster_and_prune_model_weights()
         cfd_scores = []
         teacher_centroids_dicts = []
+
+        if not self.is_cfd:
+            # 均匀分配 alpha
+            num_teachers = len(self.neighbor_model_weights)
+            alphas = torch.ones(num_teachers, dtype=torch.float) / num_teachers
+
+            self.teacher_info_list = [
+                {
+                    'centroids': teacher_centroids_dicts[i],
+                    'alpha': alphas[i].item()
+                }
+                for i in range(len(teacher_centroids_dicts))
+            ]
+            return
+
         cfd_matrix = []
         # 遍历每个教师模型：三元组(权重, centroids, 索引)
         for _, teacher_centroids, _ in self.neighbor_model_weights:
