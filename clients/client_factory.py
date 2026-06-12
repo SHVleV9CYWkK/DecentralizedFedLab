@@ -8,6 +8,7 @@ from clients.dfl_method_clients.el_local import ELLocalClient
 from clients.dfl_method_clients.fedgo_client import FedGOClient
 from clients.dfl_method_clients.qfedcg_client import QFedCGClient
 from clients.dfl_method_clients.retfhd_client import ReTFHDClient
+from clients.dfl_method_clients.wc_client import WCClient
 
 
 def create_client(num_client, args, dataset_index, full_dataset, device):
@@ -49,6 +50,13 @@ def create_client(num_client, args, dataset_index, full_dataset, device):
         client_class = ReTFHDClient
     elif "ellocal" == fl_type:
         client_class = ELLocalClient
+    elif "wc" == fl_type:
+        client_class = WCClient
+        train_hyperparam['n_clients'] = num_client
+        for key in ('lambda_hat', 'eta_min_frac', 'zeta2', 'wc_warm_mode', 'wc_calibrate',
+                    'wc_post_schedule', 'wc_eta_frac', 'wc_kappa_g', 'c_L',
+                    'lambda_hat_override'):
+            train_hyperparam[key] = getattr(args, key)
 
     else:
         raise NotImplementedError(f'Invalid Federated learning method name: {fl_type}')

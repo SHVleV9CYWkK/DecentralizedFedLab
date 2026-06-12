@@ -7,7 +7,7 @@ from torchvision.datasets import CIFAR10, CIFAR100, EMNIST, MNIST
 from torchvision import transforms
 from transformers import MobileBertForSequenceClassification
 import torch.optim as optim
-from models.cnn_model import CNNModel, LeafCNN1, LeNet, AlexNet, ResNet18, VGG16, ResNet50
+from models.cnn_model import CNNModel, LeafCNN1, LeNet, AlexNet, ResNet18, ResNet18GN, TinyViT, VGG16, ResNet50
 
 
 def load_dataset(dataset_name):
@@ -54,6 +54,8 @@ def load_model(model_name, num_classes):
         model = AlexNet(num_classes)
     elif model_name == 'resnet18':
         model = ResNet18(num_classes)
+    elif model_name == 'resnet18gn':
+        model = ResNet18GN(num_classes)
     elif model_name == 'resnet50':
         model = ResNet50(num_classes)
     elif model_name == 'vgg16':
@@ -64,6 +66,9 @@ def load_model(model_name, num_classes):
         model = LeafCNN1(num_classes)
     elif model_name == 'lenet':
         model = LeNet(num_classes)
+    elif model_name in ('tinyvit', 'tiny_vit'):
+        # BN→GN + num_classes 头；从随机初始化训练（见 models/cnn_model.py:TinyViT）
+        model = TinyViT(num_classes)
     elif model_name == 'mobilebart':
         model = MobileBertForSequenceClassification.from_pretrained("lordtt13/emo-mobilebert",
                                                                     num_labels=num_classes,

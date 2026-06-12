@@ -48,11 +48,11 @@ def parse_args_for_visualization():
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--fl_method', type=str, default='dfedavg', choices=['dfedavg', 'dfedcad', 'dfedmtkd', 'dfedmtkdrl', 'dfedpgp', 'dfedsam', 'fedgo', 'qfedcg', 'retfhd', 'ellocal'], help='Decentralized federated learning method')
+    parser.add_argument('--fl_method', type=str, default='dfedavg', choices=['dfedavg', 'dfedcad', 'dfedmtkd', 'dfedmtkdrl', 'dfedpgp', 'dfedsam', 'fedgo', 'qfedcg', 'retfhd', 'ellocal', 'wc'], help='Decentralized federated learning method')
     parser.add_argument('--dataset_name', type=str, default='emnist', choices=['cifar10', 'cifar100', 'emnist', 'mnist', 'tiny_imagenet'],
                         help='dataset name')
     parser.add_argument('--alpha', type=float, default=0.4, help='The alpha of the dataset, which is used to select the dataset')
-    parser.add_argument('--model', type=str, default='lenet', choices=['cnn', 'alexnet', 'leafcnn1', 'lenet', 'mobilebart', 'resnet18', 'vgg16', 'resnet50'],
+    parser.add_argument('--model', type=str, default='lenet', choices=['cnn', 'alexnet', 'leafcnn1', 'lenet', 'mobilebart', 'resnet18', 'resnet18gn', 'vgg16', 'resnet50', 'tinyvit'],
                         help='model name')
     parser.add_argument('--optimizer_name', type=str, default='adam', choices=['sgd', 'adam', 'adamw'],
                         help='The name of the optimizer used')
@@ -76,6 +76,24 @@ def parse_args():
     parser.add_argument('--lambda_feature_kd', type=float, default=0.1, help='Distillation strength acting on feature parts')
     parser.add_argument('--n_job', type=int, default=1, help='The number of processes that execute client training in parallel in the server')
     parser.add_argument('--rho', type=float, default=0.05, help='Sharpness-Aware Minimization radius of DFedSAM')
+    parser.add_argument('--lambda_hat', type=float, default=0.9, help='WC method: conservative upper bound of the post-join mixing-matrix spectral parameter lambda_n (fallback when no exact value is available; overestimate = safe)')
+    parser.add_argument('--eta_min_frac', type=float, default=0.0, help='WC method: optional guardrail, eta_hat >= eta_min_frac * eta_c (0 = off, spec default)')
+    parser.add_argument('--zeta2', type=float, default=1.0, help='WC method: heterogeneity constant zeta^2 used only by the near-noiseless calibration branch')
+    # —— 实验记录（results/<exp_group>/<run_name>/）——
+    parser.add_argument('--exp_group', type=str, default='adhoc', help='Experiment group name (directory under results_dir)')
+    parser.add_argument('--run_name', type=str, default='', help='Run name; empty = timestamp. Completed runs are skipped (idempotent)')
+    parser.add_argument('--results_dir', type=str, default='results', help='Root directory of structured run logs')
+    parser.add_argument('--eval_every', type=int, default=5, help='Rounds between stationarity gradient-norm evaluations (<=0 disables)')
+    # —— 拓扑 ——
+    parser.add_argument('--topology', type=str, default='random', choices=['random', 'ring', 'full'], help='Communication topology family (symmetric graphs only for ring/full)')
+    # —— WC 消融开关（实验清单 E4/E5/E6/E8/E9/E14）——
+    parser.add_argument('--wc_warm_mode', type=str, default='neighbor', choices=['neighbor', 'global_sim', 'cold', 'fitted'], help='WC warm start: neighbor=W-N (default), global_sim=W-G, cold=no warm start, fitted=deliberate R-W1 violation (E5)')
+    parser.add_argument('--wc_calibrate', type=int, default=1, help='WC: 1 = calibrate eta_hat at join (component C), 0 = keep default lr (W-only arm)')
+    parser.add_argument('--wc_post_schedule', type=str, default='constant', choices=['constant', 'sqrt_decay', 'cosine', 'warmup'], help='WC: post-join lr schedule shape (E9 ablation; spec default constant)')
+    parser.add_argument('--wc_eta_frac', type=float, default=0.0, help='WC: if >0, force eta_hat = frac * eta_c (E6 grid {eta_c*2^-j})')
+    parser.add_argument('--wc_kappa_g', type=float, default=1.0, help='WC: multiplicative perturbation on G_n estimate (E8 miscalibration robustness)')
+    parser.add_argument('--c_L', type=float, default=2.0, help='WC: conservative factor on the L estimate (must be >=1; E14 sweeps it)')
+    parser.add_argument('--lambda_hat_override', type=float, default=-1.0, help='WC: if >0, force lambda_hat to this value, bypassing the exact eigenvalue (E14)')
     parser.add_argument('--seed', type=int, default=42, help='random seed')
     parser.add_argument('--log_dir', type=str, default='logs', help='log directory')
     parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda', 'mps'],
