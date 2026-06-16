@@ -146,77 +146,68 @@ class Coordinator:
                 f"拓扑 {self.topology} 在成员状态 {sorted(bad[0])} 上诱导子图不连通（A5 失效）；"
                 "ring 拓扑请只配合单客户端延迟使用")
 
+    def _random_regular_graph(self, n, d):
+        """严格随机连通 d-正则图：每个节点恰好 d 个邻居、无自环/重边、连通。
+
+        用 networkx 的 Steger–Wormald 算法生成（对大 d 仍高效，远优于配置模型的
+        拒绝采样）；种子取自全局 random 状态以保证可复现且每次重试不同。内部重试
+        直至全图连通（d>=3 几乎必然连通，d=2 为若干环需重试得到单环）。诱导子图
+        （活跃集去掉延迟客户端）的连通性由 generate_connected_graph 外层重试保证。
+        """
+        try:
+            import networkx as nx
+        except ImportError as exc:
+            raise ImportError(
+                "对称拓扑（symmetry!=0）的严格 d-正则图生成需要 networkx，请先安装："
+                "pip install networkx") from exc
+        for _ in range(1000):
+            seed = random.randrange(2 ** 31)
+            try:
+                g = nx.random_regular_graph(d, n, seed=seed)
+            except nx.NetworkXError:
+                continue  # 偶发生成失败（悬挂的最后若干 stub 无法配对），换种子重来
+            if nx.is_connected(g):
+                graph = [[0] * n for _ in range(n)]
+                for u, v in g.edges():
+                    graph[u][v] = graph[v][u] = 1
+                return graph
+        raise RuntimeError(f"1000 次重试仍无法生成连通的 {d}-正则图 (n={n})")
+
     def _build_random_graph(self):
-        graph = [[0 for _ in range(self.num_clients)] for _ in range(self.num_clients)]
         if self.symmetry != 0:
-            # 参数检查
+            # 参数检查：简单 d-正则图存在的充要条件是 d<=n-1 且 n*d 为偶
             if self.num_conn > self.num_clients - 1:
                 raise ValueError("For undirected graphs, each node can connect up to num_clients - 1 node")
             if (self.num_clients * self.num_conn) % 2 != 0:
                 raise ValueError("For undirected graphs, num_clients * num_conn must be even")
+            return self._random_regular_graph(self.num_clients, self.num_conn)
 
-            degree = [0] * self.num_clients
+        # 有向（symmetry=0）：旧版非对称图，不在 A5 范围内，仅保留兼容
+        print("Generating a asymmetric connectivity diagram")
+        graph = [[0 for _ in range(self.num_clients)] for _ in range(self.num_clients)]
+        if self.num_conn >= self.num_clients:
+            raise ValueError("For directed graphs, the out-of-out degree of each node "
+                             "must be less than num_clients (self-looping is not allowed)")
 
-            # 1. 生成随机生成树
-            nodes = list(range(self.num_clients))
-            random.shuffle(nodes)
-            for i in range(self.num_clients - 1):
-                u = nodes[i]
-                v = nodes[i+1]
-                graph[u][v] = graph[v][u] = 1
-                degree[u] += 1
-                degree[v] += 1
+        outdegree = [0] * self.num_clients
 
-            total_edges_target = (self.num_clients * self.num_conn) // 2
-            current_edges = self.num_clients - 1
+        nodes = list(range(self.num_clients))
+        random.shuffle(nodes)
+        for i in range(self.num_clients - 1):
+            u = nodes[i]
+            v = nodes[i+1]
+            graph[u][v] = 1
+            outdegree[u] += 1
 
-            # 2. 优化补充边的方法
-            available_nodes = [i for i in range(self.num_clients) if degree[i] < self.num_conn]
+        for u in range(self.num_clients):
+            available_targets = [v for v in range(self.num_clients)
+                                 if v != u and graph[u][v] == 0]
+            random.shuffle(available_targets)
 
-            while current_edges < total_edges_target and len(available_nodes) >= 2:
-                u, v = random.sample(available_nodes, 2)
-
-                if graph[u][v] == 0:
-                    graph[u][v] = graph[v][u] = 1
-                    degree[u] += 1
-                    degree[v] += 1
-                    current_edges += 1
-                    available_nodes = [i for i in range(self.num_clients) if degree[i] < self.num_conn]
-
-            if current_edges < total_edges_target:
-                # 如果随机方法卡住，使用确定性方法补充剩余边
-                for u in range(self.num_clients):
-                    for v in range(u+1, self.num_clients):
-                        if degree[u] < self.num_conn and degree[v] < self.num_conn and graph[u][v] == 0:
-                            graph[u][v] = graph[v][u] = 1
-                            degree[u] += 1
-                            degree[v] += 1
-                            current_edges += 1
-        else:
-            print("Generating a asymmetric connectivity diagram")
-            if self.num_conn >= self.num_clients:
-                raise ValueError("For directed graphs, the out-of-out degree of each node "
-                                 "must be less than num_clients (self-looping is not allowed)")
-
-            outdegree = [0] * self.num_clients
-
-            nodes = list(range(self.num_clients))
-            random.shuffle(nodes)
-            for i in range(self.num_clients - 1):
-                u = nodes[i]
-                v = nodes[i+1]
+            needed = self.num_conn - outdegree[u]
+            for v in available_targets[:needed]:
                 graph[u][v] = 1
                 outdegree[u] += 1
-
-            for u in range(self.num_clients):
-                available_targets = [v for v in range(self.num_clients)
-                                     if v != u and graph[u][v] == 0]
-                random.shuffle(available_targets)
-
-                needed = self.num_conn - outdegree[u]
-                for v in available_targets[:needed]:
-                    graph[u][v] = 1
-                    outdegree[u] += 1
         return graph
 
     def _lambda_hat(self, active_ids, degrees):
