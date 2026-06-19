@@ -8,8 +8,10 @@
     DFL_DEVICE=cuda python run_experiments.py G1_main_cifar10   # 环境变量覆盖设备
 
 实验组 ↔ 实验清单对应：
-    G1_main_*    E11/E16/E17/E18 主表（S1 单事件 + S2 错峰多事件 × 全部臂 × 5 种子）
-                 同时供 E1/E2/E4/E10/E13 做纯分析
+    G1_main_*    E11/E16/E17/E18 主表（7 臂；同时供 E1/E2/E4/E10/E13 做纯分析）。
+                 按数据集差异化（见 MAIN_SEEDS / MAIN_SCENARIOS）：
+                   cifar10 / emnist  : S1+S2 × 5 种子（统计骨架，完整显著性）= 各 70
+                   cifar100 / tiny    : 仅 S1 × 3 种子（泛化广度）           = 各 21
     G2_grid      E6 校准质量 vs 事后网格（{η_c·2^-j}, j=0..6）
     G3_tau       E7 步长–迟到单调性（τ_k ∈ {0.2..0.9}T；E3 封顶阈值为其免费分析）
     G4_schedule  E9 调度无免费午餐（W + warmup/cosine/sqrt 衰减 vs 常数 η̂）
@@ -32,8 +34,29 @@ DEVICE = os.environ.get("DFL_DEVICE", DEVICE)
 # ==========================================================================
 
 RESULTS_DIR = "results"
-SEEDS = [42, 43, 44, 45, 46]      # 主表（E16：≥5 种子；同种子下各臂共享延迟抽取 → 配对比较）
+SEEDS = [42, 43, 44, 45, 46]      # 主表默认（E16：≥5 种子；同种子下各臂共享延迟抽取 → 配对比较）
 SEEDS_SMALL = [42, 43, 44]        # 机制 / 敏感性实验
+
+# 主表按数据集分配种子数：便宜的 cifar10/emnist 用满 5 个（保证 Wilcoxon 显著性），
+# 贵的 cifar100/tiny 先用 3 个。日后若要补到 5：把列表改成 [42,43,44,45,46]（务必
+# 在原 3 个后面追加、不要重排），幂等启动器只跑新增的 2 个种子，旧 run 一个不重跑。
+MAIN_SEEDS = {
+    'cifar10': [42, 43, 44, 45, 46],
+    'emnist': [42, 43, 44, 45, 46],
+    'cifar100': [42, 43, 44],
+    'tiny_imagenet': [42, 43, 44],
+}
+
+# 主表按数据集分配加入场景。统计骨架（cifar10/emnist）跑 S1+S2 做完整显著性；
+# 泛化广度数据集（cifar100/tiny）只跑 S1——S1 绑定全部理论与最干净的消融，
+# S2（多客户端错峰=现实性）已由骨架数据集满配演示，无需在贵数据集上重复。
+# 消融 4 臂在所有数据集上完整保留（核心论点处处可查）。
+MAIN_SCENARIOS = {
+    'cifar10': ['S1', 'S2'],
+    'emnist': ['S1', 'S2'],
+    'cifar100': ['S1'],
+    'tiny_imagenet': ['S1'],
+}
 
 # 全部 run 共享的地板参数（GR1：同地板比较；wc 客户端内部强制纯 SGD + 常数步长）
 COMMON = {
@@ -88,9 +111,12 @@ def build_groups():
     # ---- G1 主表：每数据集一组 ----
     for ds_key, ds in DATASETS.items():
         runs = []
-        for setting_name, setting in (('S1', s1(ds['n_rounds'])), ('S2', s2(ds['n_rounds']))):
+        seeds = MAIN_SEEDS.get(ds_key, SEEDS)
+        all_settings = {'S1': s1(ds['n_rounds']), 'S2': s2(ds['n_rounds'])}
+        for setting_name in MAIN_SCENARIOS.get(ds_key, ['S1', 'S2']):
+            setting = all_settings[setting_name]
             for arm_name, arm in ARMS.items():
-                for seed in SEEDS:
+                for seed in seeds:
                     runs.append((f"{ds_key}_{arm_name}_{setting_name}_s{seed}",
                                  {**COMMON, **ds, **setting, **arm, 'seed': seed}))
         groups[f'G1_main_{ds_key}'] = runs

@@ -63,7 +63,7 @@ python main.py \
 
 ### 3.1 职责
 
-把实验清单（E1–E20）翻译成 **409 个具体的 `main.py` 调用**，并提供：
+把实验清单（E1–E20）翻译成 **311 个具体的 `main.py` 调用**，并提供：
 
 - **分组**：每个实验组对应清单中的一类问题（见 §3.4 的对应表）；
 - **幂等续跑**：启动每个 run 前检查 `results/<组>/<run>/summary.json` 是否
@@ -77,7 +77,8 @@ python main.py \
 
 | 常量 | 内容 |
 |---|---|
-| `SEEDS` / `SEEDS_SMALL` | 主表 5 种子 / 机制实验 3 种子。**同一种子下所有臂的延迟时间表完全相同**（配对比较）；加种子 = 在列表里追加后重跑（幂等，只补新种子） |
+| `MAIN_SEEDS` | 主表**按数据集**分配种子：cifar10/emnist 用 5 个（完整显著性），cifar100/tiny 用 3 个（泛化广度）。`SEEDS_SMALL`（3 个）供机制/敏感性实验。**同一种子下所有臂的延迟时间表完全相同**（配对比较）；加种子 = 在列表**末尾追加**后重跑（幂等，只补新种子、不重排） |
+| `MAIN_SCENARIOS` | 主表**按数据集**分配加入场景：cifar10/emnist 跑 `S1+S2`（统计骨架），cifar100/tiny 只跑 `S1`（理论场景）。消融 4 臂在所有数据集上完整保留 |
 | `COMMON` | 全部 run 共享的地板参数（GR1 同地板比较）：纯 SGD、常数调度、对称固定图、`n_job=1` 等 |
 | `DATASETS` | 数据集 × 模型 × 轮数：cifar10/LeNet、cifar100/ResNet18-GN、emnist/LeafCNN1、tiny_imagenet/TinyViT |
 | `ARMS` | 实验臂 = `fl_method` + WC 消融开关组合：`wc / w_only / c_only / cold / dfedavg / dfedsam / ellocal` |
@@ -85,9 +86,9 @@ python main.py \
 加入场景由两个辅助函数生成：
 
 - `s1(n_rounds, frac=0.5)`：**S1 受控单事件**——1 个客户端恰在 `frac·T` 轮加入，
-  客户端按种子随机抽取；
+  客户端按种子随机抽取；**绑定全部理论（R1 恒等式、单一 τ_k、校准公式）**；
 - `s2(n_rounds)`：**S2 错峰多事件**——20% 客户端在 `(0.25T, T]` 均匀抽取的轮次
-  顺序加入。
+  顺序加入；现实性场景。
 
 ### 3.3 run 命名与目录
 
@@ -98,7 +99,10 @@ python main.py \
 
 | 组 | run 数 | 覆盖的实验 | 说明 |
 |---|---|---|---|
-| `G1_main_<数据集>` ×4 | 各 70 | E11 主表、E16 种子、E17/E18 跨数据集模型；E1/E2/E4/E10/E13 纯分析 | 7 臂 × S1/S2 × 5 种子 |
+| `G1_main_cifar10` | 70 | E11 主表、E16 种子、E17/E18 跨数据集模型；E1/E2/E4/E10/E13 纯分析 | 7 臂 × S1+S2 × 5 种子（统计骨架） |
+| `G1_main_emnist` | 70 | 同上 | 7 臂 × S1+S2 × 5 种子（统计骨架） |
+| `G1_main_cifar100` | 21 | E11/E17/E18 泛化广度（ResNet18-GN） | 7 臂 × 仅 S1 × 3 种子 |
+| `G1_main_tiny_imagenet` | 21 | E11/E17/E18 泛化广度（TinyViT） | 7 臂 × 仅 S1 × 3 种子 |
 | `G2_grid` | 24 | E6 校准 vs 神谕网格（V2） | η̂ := η_c·2⁻ʲ, j=0..6 + 校准参照臂 |
 | `G3_tau` | 24 | E7 单调性（V4）、E3 封顶阈值 | τ_k ∈ {0.2..0.9}·T |
 | `G4_schedule` | 9 | E9 调度无免费午餐 | sqrt_decay / cosine / warmup |
