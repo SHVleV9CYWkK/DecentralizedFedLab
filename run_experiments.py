@@ -76,7 +76,7 @@ COMMON = {
 # 数据集 × 模型 × 轮数（客户端数由索引目录自动决定：cifar10/emnist=100、cifar100/tiny=50）
 DATASETS = {
     'cifar10': {'dataset_name': 'cifar10', 'model': 'lenet', 'alpha': 0.4, 'n_rounds': 50},
-    'cifar100': {'dataset_name': 'cifar100', 'model': 'resnet18gn', 'alpha': 0.4, 'n_rounds': 100},
+    'cifar100': {'dataset_name': 'cifar100', 'model': 'resnet18gn', 'alpha': 0.4, 'n_rounds': 100, 'lr': 0.001},
     'emnist': {'dataset_name': 'emnist', 'model': 'leafcnn1', 'alpha': 0.4, 'n_rounds': 50},
     'tiny_imagenet': {'dataset_name': 'tiny_imagenet', 'model': 'tinyvit', 'alpha': 0.4, 'n_rounds': 100},
 }
