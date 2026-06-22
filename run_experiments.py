@@ -10,8 +10,8 @@
 实验组 ↔ 实验清单对应：
     G1_main_*    E11/E16/E17/E18 主表（7 臂；同时供 E1/E2/E4/E10/E13 做纯分析）。
                  按数据集差异化（见 MAIN_SEEDS / MAIN_SCENARIOS）：
-                   cifar10 / emnist  : S1+S2 × 5 种子（统计骨架，完整显著性）= 各 70
-                   cifar100 / tiny    : 仅 S1 × 3 种子（泛化广度）           = 各 21
+                   cifar10 / cifar100 : S1+S2 × 5 种子（统计骨架，完整显著性）= 各 70
+                   emnist / tiny       : 仅 S1 × 3 种子（泛化广度）           = 各 21
     G2_grid      E6 校准质量 vs 事后网格（{η_c·2^-j}, j=0..6）
     G3_tau       E7 步长–迟到单调性（τ_k ∈ {0.2..0.9}T；E3 封顶阈值为其免费分析）
     G4_schedule  E9 调度无免费午餐（W + warmup/cosine/sqrt 衰减 vs 常数 η̂）
@@ -37,24 +37,24 @@ RESULTS_DIR = "results"
 SEEDS = [42, 43, 44, 45, 46]      # 主表默认（E16：≥5 种子；同种子下各臂共享延迟抽取 → 配对比较）
 SEEDS_SMALL = [42, 43, 44]        # 机制 / 敏感性实验
 
-# 主表按数据集分配种子数：便宜的 cifar10/emnist 用满 5 个（保证 Wilcoxon 显著性），
-# 贵的 cifar100/tiny 先用 3 个。日后若要补到 5：把列表改成 [42,43,44,45,46]（务必
-# 在原 3 个后面追加、不要重排），幂等启动器只跑新增的 2 个种子，旧 run 一个不重跑。
+# 主表按数据集分配种子数。统计骨架（cifar10 / cifar100）用满 5 个（保证 Wilcoxon
+# 显著性）；泛化广度（emnist / tiny）用 3 个。cifar100 墙钟实测比 emnist 快（50 客户端
+# + GPU 高效 ResNet），故承担骨架；emnist（100 客户端，慢）降为广度。
+# 日后补种子：在列表末尾追加（勿重排），幂等启动器只跑新增种子。
 MAIN_SEEDS = {
     'cifar10': [42, 43, 44, 45, 46],
-    'emnist': [42, 43, 44, 45, 46],
-    'cifar100': [42, 43, 44],
+    'cifar100': [42, 43, 44, 45, 46],
+    'emnist': [42, 43, 44],
     'tiny_imagenet': [42, 43, 44],
 }
 
-# 主表按数据集分配加入场景。统计骨架（cifar10/emnist）跑 S1+S2 做完整显著性；
-# 泛化广度数据集（cifar100/tiny）只跑 S1——S1 绑定全部理论与最干净的消融，
-# S2（多客户端错峰=现实性）已由骨架数据集满配演示，无需在贵数据集上重复。
-# 消融 4 臂在所有数据集上完整保留（核心论点处处可查）。
+# 主表按数据集分配加入场景。骨架（cifar10 / cifar100）跑 S1+S2 做完整显著性；
+# 广度（emnist / tiny）只跑 S1——S1 绑定全部理论与最干净的消融，S2（多客户端错峰
+# = 现实性）由骨架数据集满配演示即可。消融 4 臂在所有数据集上完整保留。
 MAIN_SCENARIOS = {
     'cifar10': ['S1', 'S2'],
-    'emnist': ['S1', 'S2'],
-    'cifar100': ['S1'],
+    'cifar100': ['S1', 'S2'],
+    'emnist': ['S1'],
     'tiny_imagenet': ['S1'],
 }
 
@@ -74,11 +74,13 @@ COMMON = {
 }
 
 # 数据集 × 模型 × 轮数（客户端数由索引目录自动决定：cifar10/emnist=100、cifar100/tiny=50）
+# 轮数须足够长，使 Phase-1 在 τ_k=0.5T 前进入平台（Δ̂_k 稳定）、且加入后窗口 T'=T−τ_k
+# 仍长到脱离 cap-active——这是组件 C 的前提（短轮数下 V2/V4 不成立，见 2026-06 分析）。
 DATASETS = {
-    'cifar10': {'dataset_name': 'cifar10', 'model': 'lenet', 'alpha': 0.4, 'n_rounds': 50},
-    'cifar100': {'dataset_name': 'cifar100', 'model': 'resnet18gn', 'alpha': 0.4, 'n_rounds': 100, 'lr': 0.001},
-    'emnist': {'dataset_name': 'emnist', 'model': 'leafcnn1', 'alpha': 0.4, 'n_rounds': 50},
-    'tiny_imagenet': {'dataset_name': 'tiny_imagenet', 'model': 'tinyvit', 'alpha': 0.4, 'n_rounds': 100},
+    'cifar10': {'dataset_name': 'cifar10', 'model': 'lenet', 'alpha': 0.4, 'n_rounds': 200},
+    'cifar100': {'dataset_name': 'cifar100', 'model': 'resnet18gn', 'alpha': 0.4, 'n_rounds': 200},
+    'emnist': {'dataset_name': 'emnist', 'model': 'leafcnn1', 'alpha': 0.4, 'n_rounds': 150},
+    'tiny_imagenet': {'dataset_name': 'tiny_imagenet', 'model': 'tinyvit', 'alpha': 0.4, 'n_rounds': 200},
 }
 
 # 实验臂：fl_method + WC 消融开关（E11 组件消融 + 三个 baseline）

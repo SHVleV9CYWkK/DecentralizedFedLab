@@ -77,10 +77,10 @@ python main.py \
 
 | 常量 | 内容 |
 |---|---|
-| `MAIN_SEEDS` | 主表**按数据集**分配种子：cifar10/emnist 用 5 个（完整显著性），cifar100/tiny 用 3 个（泛化广度）。`SEEDS_SMALL`（3 个）供机制/敏感性实验。**同一种子下所有臂的延迟时间表完全相同**（配对比较）；加种子 = 在列表**末尾追加**后重跑（幂等，只补新种子、不重排） |
-| `MAIN_SCENARIOS` | 主表**按数据集**分配加入场景：cifar10/emnist 跑 `S1+S2`（统计骨架），cifar100/tiny 只跑 `S1`（理论场景）。消融 4 臂在所有数据集上完整保留 |
-| `COMMON` | 全部 run 共享的地板参数（GR1 同地板比较）：纯 SGD、常数调度、对称固定图、`n_job=1` 等 |
-| `DATASETS` | 数据集 × 模型 × 轮数：cifar10/LeNet、cifar100/ResNet18-GN、emnist/LeafCNN1、tiny_imagenet/TinyViT |
+| `MAIN_SEEDS` | 主表**按数据集**分配种子：**cifar10/cifar100 用 5 个**（统计骨架，完整 Wilcoxon 显著性），**emnist/tiny 用 3 个**（泛化广度）。cifar100 墙钟比 emnist 快（50 客户端 + GPU 高效 ResNet）故承担骨架。`SEEDS_SMALL`（3 个）供机制/敏感性实验。**同一种子下所有臂的延迟时间表完全相同**（配对比较）；加种子 = 在列表**末尾追加**后重跑（幂等，只补新种子、不重排） |
+| `MAIN_SCENARIOS` | 主表**按数据集**分配加入场景：**cifar10/cifar100 跑 `S1+S2`**（骨架），**emnist/tiny 只跑 `S1`**（广度）。消融 4 臂在所有数据集上完整保留 |
+| `COMMON` | 全部 run 共享的地板参数（GR1 同地板比较）：纯 SGD、常数调度、对称固定图、`lr=0.01`、`n_job=1` 等 |
+| `DATASETS` | 数据集 × 模型 × **轮数**：cifar10/LeNet/200、cifar100/ResNet18-GN/200、emnist/LeafCNN1/150、tiny/TinyViT/200。**轮数须足够长，使 Phase-1 在 τ_k=0.5T 前进入平台（Δ̂_k 稳定）、加入后窗口仍脱离 cap-active——这是组件 C 的前提**（短轮数下 V2/V4 不成立，见 §8） |
 | `ARMS` | 实验臂 = `fl_method` + WC 消融开关组合：`wc / w_only / c_only / cold / dfedavg / dfedsam / ellocal` |
 
 加入场景由两个辅助函数生成：
@@ -100,8 +100,8 @@ python main.py \
 | 组 | run 数 | 覆盖的实验 | 说明 |
 |---|---|---|---|
 | `G1_main_cifar10` | 70 | E11 主表、E16 种子、E17/E18 跨数据集模型；E1/E2/E4/E10/E13 纯分析 | 7 臂 × S1+S2 × 5 种子（统计骨架） |
-| `G1_main_emnist` | 70 | 同上 | 7 臂 × S1+S2 × 5 种子（统计骨架） |
-| `G1_main_cifar100` | 21 | E11/E17/E18 泛化广度（ResNet18-GN） | 7 臂 × 仅 S1 × 3 种子 |
+| `G1_main_cifar100` | 70 | 同上（ResNet18-GN） | 7 臂 × S1+S2 × 5 种子（统计骨架） |
+| `G1_main_emnist` | 21 | E11/E17/E18 泛化广度（LeafCNN1） | 7 臂 × 仅 S1 × 3 种子 |
 | `G1_main_tiny_imagenet` | 21 | E11/E17/E18 泛化广度（TinyViT） | 7 臂 × 仅 S1 × 3 种子 |
 | `G2_grid` | 24 | E6 校准 vs 神谕网格（V2） | η̂ := η_c·2⁻ʲ, j=0..6 + 校准参照臂 |
 | `G3_tau` | 24 | E7 单调性（V4）、E3 封顶阈值 | τ_k ∈ {0.2..0.9}·T |
@@ -214,9 +214,12 @@ train() 入口：
 5. **`eval_every` 的代价**：平稳性梯度范数 = 全网每客户端一次全批前向+反向，
    约等于一轮训练的开销 / eval_every。默认 5；只看准确率的探索性 run 可设
    `--eval_every 0` 关闭（但该 run 将没有 M_window）。
-6. **轮数预算**：`DATASETS` 中的 `n_rounds` 是当前预算值；修改后 τ_k、S2 的
-   抽取范围会按比例自动调整（`s1/s2` 函数按 `n_rounds` 计算）。
-7. **新增实验组**：在 `build_groups()` 里仿照现有组追加；run 命名保持确定性
+6. **轮数预算**：`DATASETS` 中的 `n_rounds` 须满足组件 C 的平台前提（见 §8）；
+   修改后 τ_k、S2 的抽取范围会按比例自动调整（`s1/s2` 按 `n_rounds` 计算）。
+7. **改 `n_rounds` 不会触发重跑（footgun）**：run_name 不含轮数，幂等启动器看到旧
+   `summary.json` 会跳过，于是拿到旧轮数的陈旧结果。改轮数后必须**先删除/归档
+   服务器上对应组的 `results/` 目录**再重跑（`mv results results_old` 或 `rm -rf`）。
+8. **新增实验组**：在 `build_groups()` 里仿照现有组追加；run 命名保持确定性
    （含全部变化维度 + 种子），即可获得幂等续跑。
 
 ---
@@ -224,18 +227,44 @@ train() 入口：
 ## 7. 典型工作流
 
 ```bash
-# 服务器上（cuda）：先跑最便宜的机制组，验证一切正常
-DFL_DEVICE=cuda python run_experiments.py G2_grid G3_tau G4_schedule G5_perturb G6_topology
+# 0) 若是改了轮数后的重跑：先归档旧结果（见 §6-7 footgun）
+mv results results_old_invalid     # 或 rm -rf results
 
-# 聚合并检查 E1/E2 自动核对（必须零警告再继续）
+# 1) 先只跑一个快组当"平台校验"（cifar100 墙钟快），确认进入平台再铺全量
+DFL_DEVICE=cuda python run_experiments.py G1_main_cifar100
+python -m analysis.aggregate
+#   检查 §8 的平台判据：Δ̂_k 已从 ~2.0 降下来、η̂ 脱离撞顶、cap_active 大幅减少。
+#   不达标就加长 n_rounds（或调 local_epochs）再来——别急着铺全量。
+
+# 2) 平台达标后，铺其余主表与机制组（按机器分配）
+DFL_DEVICE=cuda python run_experiments.py G1_main_cifar10 G1_main_emnist
+DFL_DEVICE=cuda python run_experiments.py G2_grid G3_tau G4_schedule G5_perturb G6_topology G7_alpha
+
+# 3) 最终聚合与分析 → 见 docs/results_analysis.md
 python -m analysis.aggregate
 cat results/report/checks.csv
-
-# 主表（重头戏，按机器分配）
-DFL_DEVICE=cuda python run_experiments.py G1_main_cifar10 G1_main_emnist
-DFL_DEVICE=cuda python run_experiments.py G1_main_cifar100 G1_main_tiny_imagenet   # 另一台机器
-python run_experiments.py G7_alpha
-
-# 全部完成后的最终聚合与分析 → 见 docs/results_analysis.md
-python -m analysis.aggregate
 ```
+
+---
+
+## 8. 组件 C 的平台前提（务必满足，否则 V2/V4 不成立）
+
+组件 C 的校准理论（规范 §5.2）建立在 **Phase-1 平台期** 上：网络在 τ_k 前已基本收敛，
+则 ε̂₁≈0、失配 Δ̂_k 稳定、`n` 消去，η̂ 公式才会按理论行为（V2 校准近最优、V4 随 τ_k 递增）。
+
+**短轮数会破坏这个前提**（2026-06 首轮 n_rounds=50/100 的实测教训）：
+
+- 网络在 τ_k 时仍在快速下降 → 平台门 P=0、Δ̂_k 高达 ~2.0 且随 τ_k 持续缩小；
+- 结果 η̂ 撞顶在 η_c（cap-active），V4 方向**反转**（η̂ 随 τ_k 递减），V2 失败（η̂ 落在 M 最差端）。
+
+**判据（跑完一组后用 events 核对）**：
+
+1. `Δ̂_k`（wc_join 事件）应随 τ_k 增大而**减小并趋稳**，量级远低于欠训时的 ~2.0；
+2. `wc_cap_active` 事件应**大幅减少**（η̂ 落进 √ 公式分支，而非撞顶）；
+3. G3 的 η̂ 应随 τ_k **单调递增**（V4）；G2 的 η̂ 应落在 M(η) U 形的**最低点附近**（V2）。
+
+**达不到时的两个杠杆**：(a) 继续加长 `n_rounds`；(b) 提高 `local_epochs`（每轮多走本地步，
+用更少轮数到平台，且减少按轮计的梯度范数评测开销；T'=剩余步数已正确处理，不破坏校准）。
+
+> 注：平台门 P 是 100 客户端逐一 AND，即便真平台也可能仍为 0——**看 Δ̂_k/ε̂₁ 是否变小
+> 比看 P 是否=1 更可靠**（P=0 时走 ε̂₁ 回退，真平台下 ε̂₁≈0、校准照样正确）。
