@@ -12,13 +12,20 @@ from clients.dfl_method_clients.wc_client import WCClient
 
 
 def create_client(num_client, args, dataset_index, full_dataset, device):
+    # DataLoader 工作进程数：默认 0；仅 tiny_imagenet（ImageFolder，磁盘 JPEG 解码）
+    # 自动启用 >0 以让加载与计算重叠。--num_workers 显式 >0 时对所有数据集生效（覆盖）。
+    num_workers = args.num_workers
+    if num_workers == 0 and 'tiny' in args.dataset_name:
+        num_workers = 4
+
     train_hyperparam = {
         'optimizer_name': args.optimizer_name,
         'lr': args.lr,
         'bz': args.batch_size,
         'local_epochs': args.local_epochs,
         'n_rounds': args.n_rounds,
-        'scheduler_name': args.scheduler_name
+        'scheduler_name': args.scheduler_name,
+        'num_workers': num_workers,
     }
 
     fl_type = args.fl_method

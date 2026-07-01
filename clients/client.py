@@ -26,12 +26,22 @@ class Client(ABC):
         self.num_classes = len(full_dataset.classes)
         client_train_dataset = Subset(full_dataset, indices=train_indices)
         client_val_dataset = Subset(full_dataset, indices=val_indices)
-        self.client_train_loader = DataLoader(client_train_dataset, batch_size=hyperparam['bz'],shuffle=False,
-                                              drop_last=True)
+        # 默认 num_workers=0（内存型数据集 CIFAR/EMNIST 加载已很快）；工厂对 tiny_imagenet
+        # （ImageFolder，磁盘 JPEG 解码）传入 >0 使加载与计算重叠。
+        # 仅在 CUDA 上启用：CUDA=Linux/fork，worker 极廉价且能重叠；MPS/CPU=macOS/spawn，
+        # 每个 worker 启动要重新 import torch，50 客户端反复 spawn 反而灾难性变慢。
+        # 不用 persistent_workers：50 个客户端各自的 loader 会各留常驻 worker（50×N 进程爆炸）；
+        # 串行训练（n_job=1）下每次只有一个客户端在跑，非常驻峰值仅 N 个 worker。
+        num_workers = hyperparam.get('num_workers', 0)
+        loader_kwargs = {}
+        if num_workers > 0 and device.type == 'cuda':
+            loader_kwargs = {'num_workers': num_workers, 'pin_memory': True}
+        self.client_train_loader = DataLoader(client_train_dataset, batch_size=hyperparam['bz'], shuffle=False,
+                                              drop_last=True, **loader_kwargs)
         self.client_val_loader = DataLoader(client_val_dataset,
                                             batch_size=hyperparam['bz']
                                             if hyperparam['bz'] <= len(client_val_dataset) else len(client_val_dataset),
-                                            shuffle=False,)
+                                            shuffle=False, **loader_kwargs)
         self.global_metric = self.global_epoch = 0
         self.lr_scheduler = None
         self.neighbor_model_weights = []

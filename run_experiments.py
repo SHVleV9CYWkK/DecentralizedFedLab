@@ -80,7 +80,7 @@ DATASETS = {
     'cifar10': {'dataset_name': 'cifar10', 'model': 'lenet', 'alpha': 0.4, 'n_rounds': 200},
     'cifar100': {'dataset_name': 'cifar100', 'model': 'resnet18gn', 'alpha': 0.4, 'n_rounds': 200},
     'emnist': {'dataset_name': 'emnist', 'model': 'leafcnn1', 'alpha': 0.4, 'n_rounds': 150},
-    'tiny_imagenet': {'dataset_name': 'tiny_imagenet', 'model': 'tinyvit', 'alpha': 0.4, 'n_rounds': 200},
+    'tiny_imagenet': {'dataset_name': 'tiny_imagenet', 'model': 'resnet18gn', 'alpha': 0.4, 'n_rounds': 200},
 }
 
 # 实验臂：fl_method + WC 消融开关（E11 组件消融 + 三个 baseline）
