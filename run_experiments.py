@@ -18,6 +18,8 @@
     G5_perturb   E5 R-W1 违规；E8 κ 扰动；E14 估计器保守方向；E4(c) W-G 全局平均
     G6_topology  E15 |N_k| / E20 谱隙（ring / full / random num_conn 扫描）
     G7_alpha     E19 异质性（Dirichlet α ∈ {0.1, 1.0}；α=0.4 复用 G1）
+    G8_calib_probe  组件 C 诊断：C 表现差是否因 cap-active（稀疏图→η_c 太小）。
+                 隔离 C（wc vs w_only）× 连通度(conn6/full) × τ_k(0.5/0.9T) × c_L(2/1)
 
 跑完后聚合：python -m analysis.aggregate
 """
@@ -188,6 +190,37 @@ def build_groups():
                              {**COMMON, **cifar10, **s1(cifar10['n_rounds']),
                               **ARMS[arm_name], 'alpha': alpha, 'seed': seed}))
     groups['G7_alpha'] = runs
+
+    # ---- G8 校准探针：确认"C 表现差是否因 cap-active（稀疏图→η_c 太小）"----
+    # cifar10 长轮（已平台）；只隔离 C（wc vs w_only，二者同为 warm，仅校准 on/off）。
+    # 三个杠杆让 η̂ 脱离 cap，看 C 是否随之"由害转益"、V4 是否转为递增：
+    #   连通度：conn6(λ≈0.87,capped 基线) vs full(λ=0.5,off-cap)
+    #   加入点：τ_k=0.5T（长窗口）vs 0.9T（短窗口=obs.5 的战场）
+    #   c_L   ：2(默认) vs 1（更小 L̂ → 更大 η_c，最省的抬 η_c 手段）
+    # 读法：① full/off-cap 或 c_L=1 下 wc 是否追平/反超 w_only（C 由害转益）
+    #       ② τ_k 0.5→0.9 时 η̂ 是否递增（V4）③ off-cap 后 η̂ 是否落进 √ 分支
+    runs = []
+    c10 = {**COMMON, **DATASETS['cifar10']}            # n_rounds=200, lr=0.01, 已平台
+    T10 = DATASETS['cifar10']['n_rounds']
+    conn = {
+        'conn6': {'topology': 'random', 'num_conn': 6},   # 稀疏，λ≈0.87 → capped
+        'full':  {'topology': 'full', 'num_conn': 6},     # 稠密，λ=0.5 → off-cap
+    }
+    probe_arms = {'wc': {'fl_method': 'wc'},
+                  'wonly': {'fl_method': 'wc', 'wc_calibrate': 0}}
+    # A) 连通度 × 加入点 × 臂（决定性对照）
+    for tname, topo in conn.items():
+        for frac in (0.5, 0.9):
+            for aname, arm in probe_arms.items():
+                for seed in SEEDS_SMALL:
+                    runs.append((f"{tname}_tau{int(frac*100)}_{aname}_s{seed}",
+                                 {**c10, **topo, **s1(T10, frac), **arm, 'seed': seed}))
+    # B) c_L 杠杆（稀疏图上，看 c_L=1 能否抬 η_c 脱离 cap）
+    for aname, arm in probe_arms.items():
+        for seed in SEEDS_SMALL:
+            runs.append((f"conn6_cL1_tau50_{aname}_s{seed}",
+                         {**c10, **conn['conn6'], **s1(T10, 0.5), **arm, 'c_L': 1.0, 'seed': seed}))
+    groups['G8_calib_probe'] = runs
 
     return groups
 
