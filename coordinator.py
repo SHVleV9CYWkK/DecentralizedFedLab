@@ -272,12 +272,6 @@ class Coordinator:
                          for k in keys)
         return mean, omega / len(sds)
 
-    @staticmethod
-    def _distance_to_mean(client, mean):
-        sd = client.model.state_dict()
-        return math.sqrt(sum(float(((sd[k].detach().cpu().double() - mean[k]) ** 2).sum())
-                             for k in mean))
-
     def consensus_error(self):
         _, omega = self._consensus_stats(self.participated_training_clients)
         return omega
@@ -387,16 +381,29 @@ class Coordinator:
             client.set_init_model(deepcopy(self.init_model))
             client.init_client()
 
-        # 加入恒等式数据：D_k 与 Ω^{τ_k}（R1：Ω^{τ_k} = (n−1)/n·Ω^{τ_k−} + (n−1)/n²·D_k²）
+        # 加入恒等式数据（R1 及其 §11 多客户端合成）：
+        #   Ω^{τ_k} = [n_pre·Ω^{τ_k−} + Σ_j D_j² − ‖Σ_j δ_j‖²/n] / n，δ_j = θ_{k_j} − θ̄^{τ_k−}
+        # 单客户端时退化为 (n−1)/n·Ω^{τ_k−} + (n−1)/n²·D_k²。逐项 D_j 之外还需
+        # 位移向量和的范数 D_sum = ‖Σ_j δ_j‖（交叉项无法由各 D_j 标量还原）。
         if theta_bar_pre is not None:
-            d_k = {cid: self._distance_to_mean(self.all_clients[cid], theta_bar_pre)
-                   for cid in joining}
+            d_k = {}
+            delta_sum = {k: torch.zeros_like(v) for k, v in theta_bar_pre.items()}
+            for cid in joining:
+                sd = self.all_clients[cid].model.state_dict()
+                dk2 = 0.0
+                for k in theta_bar_pre:
+                    diff = sd[k].detach().cpu().double() - theta_bar_pre[k]
+                    dk2 += float((diff ** 2).sum())
+                    delta_sum[k] += diff
+                d_k[cid] = math.sqrt(dk2)
+            d_sum = math.sqrt(sum(float((v ** 2).sum()) for v in delta_sum.values()))
             _, omega_post = self._consensus_stats(self.participated_training_clients)
             event_bus.emit('join_identity',
                            joining=joining,
                            omega_pre=omega_pre,
                            omega_post=omega_post,
                            D_k=d_k,
+                           D_sum=d_sum,
                            n_post=len(self.participated_training_clients))
         return joining
 

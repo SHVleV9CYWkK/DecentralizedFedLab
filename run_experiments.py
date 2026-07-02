@@ -20,6 +20,13 @@
     G7_alpha     E19 异质性（Dirichlet α ∈ {0.1, 1.0}；α=0.4 复用 G1）
     G8_calib_probe  组件 C 诊断：C 表现差是否因 cap-active（稀疏图→η_c 太小）。
                  隔离 C（wc vs w_only）× 连通度(conn6/full) × τ_k(0.5/0.9T) × c_L(2/1)
+    G9_grid_full    V2 off-cap：full 拓扑 η 网格 vs 校准（conn6 版被 cap 污染）
+    G10_tau_full    V4 阶梯 off-cap：full 拓扑 τ_k∈{0.2..0.9}T 全扫描
+    G11_kappa_full  E8/R5 off-cap：κ 鲁棒性（capped 下 κ 无效，G5 κ 臂作废）
+    G12_sched_full  E9 off-cap：调度 vs 常数 η̂
+
+注意：全部 SGD 无动量（get_optimizer momentum=0，同地板 GR1）；改动momentum前
+跑的 baseline 结果 (m=0.9) 与新口径不同环境，须删除对应 run 目录后重跑。
 
 跑完后聚合：python -m analysis.aggregate
 """
@@ -221,6 +228,48 @@ def build_groups():
             runs.append((f"conn6_cL1_tau50_{aname}_s{seed}",
                          {**c10, **conn['conn6'], **s1(T10, 0.5), **arm, 'c_L': 1.0, 'seed': seed}))
     groups['G8_calib_probe'] = runs
+
+    # ---- G9–G12：off-cap 机制补全（组件 C 的定量验证必须在 √ 分支运行）----
+    # G8 结论：稀疏图（conn6，λ≈0.87）上校准恒 cap-active，√ 分支从未执行，
+    # 故 conn6 上的 G2/G3/G4/G5-κ 只记录了封顶分支行为。V2、完整 V4 阶梯、
+    # E8 κ 鲁棒性、E9 调度对比须在 full 拓扑（λ=0.5，off-cap）重做。
+    full_base = {**c10, 'topology': 'full', **s1(T10, 0.5), 'fl_method': 'wc'}
+
+    # G9 = V2 off-cap：η 网格 {η_c·2^-j} + 校准参照（判据：M(η̂)/M(η_best) ≤ (c+1/c)/2×1.25）
+    runs = []
+    for j in range(7):
+        for seed in SEEDS_SMALL:
+            runs.append((f"gridfull_j{j}_s{seed}",
+                         {**full_base, 'wc_eta_frac': 0.5 ** j, 'seed': seed}))
+    for seed in SEEDS_SMALL:
+        runs.append((f"gridfull_calibrated_s{seed}", {**full_base, 'seed': seed}))
+    groups['G9_grid_full'] = runs
+
+    # G10 = V4 阶梯 off-cap：τ_k 全扫描（G8 仅 2 点已验证方向，此处出论文阶梯图）
+    runs = []
+    for frac in (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9):
+        for seed in SEEDS_SMALL:
+            runs.append((f"taufull{int(frac * 100)}_s{seed}",
+                         {**c10, 'topology': 'full', **s1(T10, frac),
+                          'fl_method': 'wc', 'seed': seed}))
+    groups['G10_tau_full'] = runs
+
+    # G11 = E8/R5 off-cap：κ 扰动（capped 下 κ 被 min 吞掉，G5 的 κ 臂无效；
+    # 判据：M 膨胀 ≤ (√κ+1/√κ)/2；κ=1 参照 = G9 gridfull_calibrated）
+    runs = []
+    for kappa in (0.0625, 0.25, 4.0, 16.0):
+        for seed in SEEDS_SMALL:
+            runs.append((f"kappafull{kappa}_s{seed}",
+                         {**full_base, 'wc_kappa_g': kappa, 'seed': seed}))
+    groups['G11_kappa_full'] = runs
+
+    # G12 = E9 off-cap：调度形状 vs 常数 η̂（常数参照 = G9 gridfull_calibrated）
+    runs = []
+    for sched in ('sqrt_decay', 'cosine', 'warmup'):
+        for seed in SEEDS_SMALL:
+            runs.append((f"schedfull_{sched}_s{seed}",
+                         {**full_base, 'wc_post_schedule': sched, 'seed': seed}))
+    groups['G12_sched_full'] = runs
 
     return groups
 

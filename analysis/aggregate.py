@@ -140,17 +140,28 @@ def derive_run_metrics(runs_df, rounds_df, events_df):
                 recovered = post[post['accuracy'] >= baseline]
                 rec['recovery_rounds'] = (recovered['round'].iloc[0] - tau) if len(recovered) else math.nan
 
-        # —— E1：R1 恒等式 Ω^{τ_k} = (n−1)/n·Ω^{τ_k−} + (n−1)/n²·ΣD_k² ——
+        # —— E1：R1 恒等式（含 §11 同轮多客户端合成）——
+        #   Ω_post = [n_pre·Ω_pre + Σ_j D_j² − D_sum²/n] / n，D_sum = ‖Σ_j δ_j‖
+        #   m=1 时退化为 (n−1)/n·Ω_pre + (n−1)/n²·D²。多客户端需要 D_sum
+        #  （交叉项无法由各 D_j 标量还原）；旧数据无 D_sum 的多客户端事件跳过。
         if len(ev):
             ji = ev[ev['event'] == 'join_identity']
             residuals = []
             for _, e in ji.iterrows():
                 n = e.get('n_post')
                 d_k = e.get('D_k') or {}
-                if not n or e.get('omega_post') in (None, 0):
+                if not n or e.get('omega_post') in (None, 0) or not d_k:
                     continue
-                predicted = ((n - 1) / n) * e['omega_pre'] \
-                    + ((n - 1) / n ** 2) * sum(v ** 2 for v in d_k.values())
+                m = len(d_k)
+                d_sum = e.get('D_sum')
+                if m == 1:
+                    d_sum2 = list(d_k.values())[0] ** 2 if d_sum is None else d_sum ** 2
+                elif d_sum is not None and not pd.isna(d_sum):
+                    d_sum2 = d_sum ** 2
+                else:
+                    continue  # 旧日志缺 D_sum：无法核对多客户端事件
+                predicted = ((n - m) * e['omega_pre']
+                             + sum(v ** 2 for v in d_k.values()) - d_sum2 / n) / n
                 residuals.append(abs(e['omega_post'] - predicted) / max(e['omega_post'], 1e-30))
             if residuals:
                 rec['e1_residual'] = max(residuals)

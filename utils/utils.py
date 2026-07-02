@@ -116,7 +116,9 @@ def get_optimizer(optimizer_name, parameters, lr):
         return optim.Adam(parameters, lr=lr)
 
     elif optimizer_name == "sgd":
-        return optim.SGD(parameters, lr=lr, momentum=0.9)
+        # momentum=0：同地板比较（GR1）。动量使有效步长≈η/(1−β)（0.9 时≈10η），
+        # 与式 (U) 的纯 SGD 步不同环境；全部臂统一无动量
+        return optim.SGD(parameters, lr=lr, momentum=0)
 
     elif optimizer_name == "adamw":
         return optim.AdamW(parameters, lr=lr)

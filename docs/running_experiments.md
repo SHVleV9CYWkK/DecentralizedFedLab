@@ -109,6 +109,11 @@ python main.py \
 | `G5_perturb` | 30 | E5 R-W1 违规、E8 κ 扰动、E14 保守方向、E4(c) W-G | fitted / global_sim / κ∈{1/16..16} / c_L / λ̂ 扰动 |
 | `G6_topology` | 12 | E15 邻居数、E20 谱隙 | ring / full / num_conn∈{4,10} |
 | `G7_alpha` | 30 | E19 异质性 | α ∈ {0.1, 1.0}（α=0.4 复用 G1） |
+| `G8_calib_probe` | 30 | 组件 C 诊断（cap-active 根因确认） | wc/w_only × conn6/full/cL1 × τ∈{0.5,0.9}T |
+| `G9_grid_full` | 24 | **V2 off-cap**（conn6 版被 cap 污染，不可用于 V2） | full 拓扑 η 网格 + 校准参照 |
+| `G10_tau_full` | 24 | **V4 阶梯 off-cap**（论文 η̂-τ_k 图） | full 拓扑 τ∈{0.2..0.9}T |
+| `G11_kappa_full` | 12 | **E8/R5 off-cap**（capped 下 κ 被 min 吞掉，G5 κ 臂作废） | κ∈{1/16,1/4,4,16} |
+| `G12_sched_full` | 9 | **E9 off-cap** 调度 vs 常数 η̂ | sqrt_decay/cosine/warmup |
 
 ### 3.5 多机分工
 
@@ -206,8 +211,12 @@ train() 入口：
    启动器已固定为 1。
 2. **`--symmetry 1 --gossip 0`**：理论假设 A5 要求对称混合矩阵；固定图才有
    精确 λ̂。每轮随机图（`gossip 1`）仅作为时变拓扑消融臂。
-3. **优化器/调度器参数对 wc 无效**：WCClient 内部强制无动量 SGD + 常数步长
-   （式 (U) 语义）；baseline 臂仍按传入的 `optimizer_name` 运行。
+3. **全部臂统一无动量 SGD**：WCClient 内部强制 momentum=0（式 (U) 语义）；
+   `get_optimizer` 的 sgd 分支也已改为 momentum=0（GR1 同地板——动量使有效步长
+   ≈η/(1−β)，0.9 时≈10η，属不同环境）。**momentum 改动之前跑的 baseline 结果
+   （dfedavg/dfedsam/ellocal，m=0.9）与新口径不可比，须删除对应 run 目录重跑**：
+   `rm -rf results/G1_main_*/*_dfedavg_* results/G1_main_*/*_dfedsam_* results/G1_main_*/*_ellocal_* results/G7_alpha/*_dfedavg_*`
+   （幂等启动器只补跑被删的臂，wc 族不受影响、无需重跑）。
 4. **BatchNorm 模型不要直接用**：模型平均破坏 BN running stats（规范 §8-2）。
    矩阵中已使用 GN 版本：`resnet18gn`、`tinyvit`（内部 BN→GN）。原始
    `resnet18` 仅保留兼容，不要用于本课题实验。

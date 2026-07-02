@@ -132,7 +132,7 @@ python -m analysis.aggregate --results_dir results --out paper_assets   # 自定
 | `M_window` | $\frac{1}{|S|}\sum_{r\in S}\text{gradnorm2}(r)$，$S$=窗口 $[\tau_k,T)$ 内的采样轮 | **主验证指标**（GR2）：窗口平均平稳性 |
 | `acc_dip` | 加入前基线（τ 前最后 3 轮 overall accuracy 均值）−（$[\tau,\tau+10]$ 窗口内最低 accuracy） | 加入冲击的实用度量（可为负 = 无跌落） |
 | `recovery_rounds` | 加入后 overall accuracy 首次 ≥ 基线的轮数 − τ；未恢复 = NaN | 恢复速度 |
-| `e1_residual` | $\dfrac{\big|\Omega^{\tau}-\big(\tfrac{n-1}{n}\Omega^{\tau-}+\tfrac{n-1}{n^2}\sum_k D_k^2\big)\big|}{\Omega^{\tau}}$（多事件取最大） | R1 是**恒等式**：应 ≈ 浮点精度（实测 ~1e-16） |
+| `e1_residual` | 相对残差 $\big\|\Omega^{\tau}-\hat\Omega\big\|/\Omega^{\tau}$，$\hat\Omega=\frac{n_{pre}\Omega^{\tau-}+\sum_j D_j^2-\|D_{sum}\|^2/n}{n}$（R1 的 §11 多客户端合成；$m{=}1$ 退化为 $\frac{n-1}{n}\Omega^{\tau-}+\frac{n-1}{n^2}D^2$；旧日志缺 `D_sum` 的多客户端事件跳过），多事件取最大 | R1 是**恒等式**：应 ≈ 浮点精度（实测 ~1e-16） |
 | `e2_eta_nunique` | 各 `tau_k` 上全部客户端上报 η̂ 的去重计数的最大值 | 必须 = 1（§3.4 逐比特一致切换） |
 | `Delta_k` / `eta_hat` | 首个加入事件的失配估计与切换步长 | E7/E10 的横轴/纵轴 |
 
