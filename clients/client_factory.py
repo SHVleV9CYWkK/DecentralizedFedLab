@@ -26,6 +26,7 @@ def create_client(num_client, args, dataset_index, full_dataset, device):
         'n_rounds': args.n_rounds,
         'scheduler_name': args.scheduler_name,
         'num_workers': num_workers,
+        'augment': getattr(args, 'augment', 0),
     }
 
     fl_type = args.fl_method

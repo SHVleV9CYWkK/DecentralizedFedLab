@@ -26,6 +26,12 @@ class Client(ABC):
         self.num_classes = len(full_dataset.classes)
         client_train_dataset = Subset(full_dataset, indices=train_indices)
         client_val_dataset = Subset(full_dataset, indices=val_indices)
+        # 未增强的训练数据视图：供 E_k 固定评测集与全批梯度评测（Ω/‖∇f‖²）使用。
+        # 增强只进训练加载器（f_i 变为增强分布下的期望损失，A1–A5 照常成立）。
+        self.train_eval_dataset = client_train_dataset
+        if hyperparam.get('augment', 0):
+            from utils.utils import AugmentedDataset
+            client_train_dataset = AugmentedDataset(client_train_dataset)
         # 默认 num_workers=0（内存型数据集 CIFAR/EMNIST 加载已很快）；工厂对 tiny_imagenet
         # （ImageFolder，磁盘 JPEG 解码）传入 >0 使加载与计算重叠。
         # 仅在 CUDA 上启用：CUDA=Linux/fork，worker 极廉价且能重叠；MPS/CPU=macOS/spawn，
@@ -38,6 +44,13 @@ class Client(ABC):
             loader_kwargs = {'num_workers': num_workers, 'pin_memory': True}
         self.client_train_loader = DataLoader(client_train_dataset, batch_size=hyperparam['bz'], shuffle=False,
                                               drop_last=True, **loader_kwargs)
+        # 干净训练加载器（无增强，确定性）：全批梯度评测 ‖∇f_n(θ̄)‖² 专用；
+        # 未启用增强时与训练加载器同一对象
+        if hyperparam.get('augment', 0):
+            self.train_eval_loader = DataLoader(self.train_eval_dataset, batch_size=hyperparam['bz'],
+                                                shuffle=False, drop_last=True, **loader_kwargs)
+        else:
+            self.train_eval_loader = self.client_train_loader
         self.client_val_loader = DataLoader(client_val_dataset,
                                             batch_size=hyperparam['bz']
                                             if hyperparam['bz'] <= len(client_val_dataset) else len(client_val_dataset),

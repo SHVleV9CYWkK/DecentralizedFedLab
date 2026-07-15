@@ -24,6 +24,9 @@
     G10_tau_full    V4 阶梯 off-cap：full 拓扑 τ_k∈{0.2..0.9}T 全扫描
     G11_kappa_full  E8/R5 off-cap：κ 鲁棒性（capped 下 κ 无效，G5 κ 臂作废）
     G12_sched_full  E9 off-cap：调度 vs 常数 η̂
+    G13_lrgrid_*    主表 v2 前置：cifar100/tiny 的地板 lr 网格（带增强）
+    G14_main_aug_*  主表 v2：调好的 lr* + 增强 + 预训练卷积初始化，6 臂
+                    （先跑 G13，把 lr* 填入 LR_STAR 后本组才生成）
 
 注意：全部 SGD 无动量（get_optimizer momentum=0，同地板 GR1）；改动momentum前
 跑的 baseline 结果 (m=0.9) 与新口径不同环境，须删除对应 run 目录后重跑。
@@ -67,6 +70,53 @@ MAIN_SCENARIOS = {
     'tiny_imagenet': ['S1'],
 }
 
+# ============ 主表 v2 的调好地板 lr ============
+# None = 从 G13 网格的落盘结果自动解析（见 resolve_lr_star：按平均最终准确率选取，
+# 要求 4 档 lr × 全部种子均 COMPLETED 才生效，防止半程数据误选）。
+# 手动填入数值可覆盖自动解析，例如 {'cifar100': 0.003, ...}。
+LR_STAR = {
+    'cifar100': None,
+    'tiny_imagenet': None,
+}
+
+GRID_LRS = (0.03, 0.01, 0.003, 0.001)
+
+
+def resolve_lr_star(ds_key):
+    """自动解析主表 v2 的地板 lr*：LR_STAR 手动值优先；否则读 G13 网格结果。
+
+    选取标准（论文须声明）：固定 lr 臂按其最优代表出场 —— lr* = 各档 lr 的
+    平均最终准确率最大者。网格不完整（缺档或缺种子）时返回 None，G14 不生成。
+    """
+    if LR_STAR.get(ds_key) is not None:
+        return LR_STAR[ds_key]
+    group_dir = os.path.join(RESULTS_DIR, f'G13_lrgrid_{ds_key}')
+    if not os.path.isdir(group_dir):
+        return None
+    acc_by_lr = {}
+    for run_name in os.listdir(group_dir):
+        run_dir = os.path.join(group_dir, run_name)
+        try:
+            with open(os.path.join(run_dir, 'summary.json'), encoding='utf-8') as f:
+                summary = json.load(f)
+            with open(os.path.join(run_dir, 'config.json'), encoding='utf-8') as f:
+                config = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if summary.get('status') != 'COMPLETED':
+            continue
+        acc = summary.get('final', {}).get('accuracy')
+        if acc is not None:
+            acc_by_lr.setdefault(config['args']['lr'], []).append(acc)
+    if set(acc_by_lr) != set(GRID_LRS) or \
+            any(len(v) < len(SEEDS_SMALL) for v in acc_by_lr.values()):
+        return None
+    means = {lr: sum(v) / len(v) for lr, v in acc_by_lr.items()}
+    lr_star = max(means, key=means.get)
+    table = '  '.join(f'lr={lr}:{means[lr]:.4f}' for lr in sorted(means, reverse=True))
+    print(f"[auto] {ds_key} 网格 → lr* = {lr_star}   ({table})")
+    return lr_star
+
 # 全部 run 共享的地板参数（GR1：同地板比较；wc 客户端内部强制纯 SGD + 常数步长）
 COMMON = {
     'optimizer_name': 'sgd',
@@ -92,14 +142,16 @@ DATASETS = {
     'tiny_imagenet': {'dataset_name': 'tiny_imagenet', 'model': 'resnet18gn', 'alpha': 0.4, 'n_rounds': 200},
 }
 
-# 实验臂：fl_method + WC 消融开关（E11 组件消融 + 三个 baseline）
+# 实验臂：fl_method + WC 消融开关（E11 组件消融 + baseline）
+# 论文标注：cold ≡ D-PSGD (Lian et al. 2017)；w_only ≡ D-PSGD + aggregate-on-join。
+# dfedsam 已移除：SAM 依赖动量，与无动量同地板（GR1）不兼容，三数据集均退化至
+# 随机水平；论文 Related Work 提及即可。
 ARMS = {
     'wc':      {'fl_method': 'wc'},
     'w_only':  {'fl_method': 'wc', 'wc_calibrate': 0},
     'c_only':  {'fl_method': 'wc', 'wc_warm_mode': 'cold'},
     'cold':    {'fl_method': 'wc', 'wc_warm_mode': 'cold', 'wc_calibrate': 0},
     'dfedavg': {'fl_method': 'dfedavg'},
-    'dfedsam': {'fl_method': 'dfedsam'},
     'ellocal': {'fl_method': 'ellocal'},
 }
 
@@ -191,7 +243,7 @@ def build_groups():
     # ---- G7 异质性（E19）----
     runs = []
     for alpha in (0.1, 1.0):
-        for arm_name in ('wc', 'w_only', 'dfedavg'):
+        for arm_name in ('wc', 'w_only', 'dfedavg', 'ellocal'):
             for seed in SEEDS:
                 runs.append((f"a{alpha}_{arm_name}_s{seed}",
                              {**COMMON, **cifar10, **s1(cifar10['n_rounds']),
@@ -271,6 +323,39 @@ def build_groups():
                          {**full_base, 'wc_post_schedule': sched, 'seed': seed}))
     groups['G12_sched_full'] = runs
 
+    # ---- G13/G14：主表 v2（cifar100/tiny，增强 + 调好的地板 lr）----
+    # 差距审计结论：固定 lr 臂必须 per-dataset 调参（"打败未调参 baseline"不成立），
+    # 且绝对精度须进入文献可比区间（补数据增强，理论中性）。cifar10 与全部机制组
+    # （G2–G12）不受影响、不重跑。老的 G1_main_cifar100/tiny（无增强、lr=0.01、
+    # ResNet 从头训练）保留在盘上作 no-aug 记录，论文不再使用。
+    for ds_key in ('cifar100', 'tiny_imagenet'):
+        ds = DATASETS[ds_key]
+        runs = []
+        for lr in GRID_LRS:
+            for seed in SEEDS_SMALL:
+                runs.append((f"lr{lr}_s{seed}",
+                             {**COMMON, **ds, **s1(ds['n_rounds']), **ARMS['w_only'],
+                              'lr': lr, 'augment': 1, 'seed': seed}))
+        groups[f'G13_lrgrid_{ds_key}'] = runs
+
+    # G14：lr* 自动解析自 G13 落盘结果（或 LR_STAR 手动覆盖）；网格未完成时不生成。
+    # 全部臂共享 lr*（含 wc 的 Phase-1）——"调好的地板上 wc 额外自校准"。
+    for ds_key, scen_names, seeds in (('cifar100', ['S1', 'S2'], SEEDS),
+                                      ('tiny_imagenet', ['S1'], SEEDS)):
+        lr_star = resolve_lr_star(ds_key)
+        if lr_star is None:
+            continue
+        ds = DATASETS[ds_key]
+        runs = []
+        all_settings = {'S1': s1(ds['n_rounds']), 'S2': s2(ds['n_rounds'])}
+        for scen in scen_names:
+            for arm_name, arm in ARMS.items():
+                for seed in seeds:
+                    runs.append((f"{ds_key}_{arm_name}_{scen}_s{seed}",
+                                 {**COMMON, **ds, **all_settings[scen], **arm,
+                                  'lr': lr_star, 'augment': 1, 'seed': seed}))
+        groups[f'G14_main_aug_{ds_key}'] = runs
+
     return groups
 
 
@@ -310,12 +395,22 @@ def main():
         for name, runs in all_groups.items():
             done = sum(1 for run_name, _ in runs if is_completed(name, run_name))
             print(f"  {name:24s} {done}/{len(runs)} 完成")
+        for ds_key in ('cifar100', 'tiny_imagenet'):
+            if f'G14_main_aug_{ds_key}' not in all_groups:
+                print(f"  G14_main_aug_{ds_key:14s} （待 G13_lrgrid_{ds_key} 完成后自动生成）")
         return
 
     failed = []
     for group in args.groups:
+        # 每组开跑前重建组列表：G14 依赖 G13 的落盘结果自动解析 lr*，
+        # 使 `run_experiments.py G13_... G14_...` 一条命令可以完整跑通流水线
+        all_groups = build_groups()
         if group not in all_groups:
-            print(f"未知实验组: {group}（--list 查看全部）")
+            if group.startswith('G14'):
+                print(f"跳过 {group}：对应的 G13 网格尚未全部完成，无法自动解析 lr*"
+                      f"（先跑 G13，或在 LR_STAR 手动填值）")
+            else:
+                print(f"未知实验组: {group}（--list 查看全部）")
             continue
         runs = all_groups[group]
         for i, (run_name, config) in enumerate(runs):

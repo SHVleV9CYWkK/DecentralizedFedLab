@@ -76,6 +76,7 @@ def parse_args():
     parser.add_argument('--lambda_feature_kd', type=float, default=0.1, help='Distillation strength acting on feature parts')
     parser.add_argument('--n_job', type=int, default=1, help='The number of processes that execute client training in parallel in the server')
     parser.add_argument('--num_workers', type=int, default=0, help='DataLoader worker processes. Default 0; auto-set to 4 for tiny_imagenet (ImageFolder/JPEG decode). Explicit >0 overrides for all datasets. Requires n_job=1.')
+    parser.add_argument('--augment', type=int, default=0, help='1 = standard train-time augmentation (RandomCrop pad=4 + horizontal flip) on the training loader only; eval/E_k/full-batch metrics stay clean')
     parser.add_argument('--rho', type=float, default=0.05, help='Sharpness-Aware Minimization radius of DFedSAM')
     parser.add_argument('--lambda_hat', type=float, default=0.9, help='WC method: conservative upper bound of the post-join mixing-matrix spectral parameter lambda_n (fallback when no exact value is available; overestimate = safe)')
     parser.add_argument('--eta_min_frac', type=float, default=0.0, help='WC method: optional guardrail, eta_hat >= eta_min_frac * eta_c (0 = off, spec default)')

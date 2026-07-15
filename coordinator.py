@@ -294,7 +294,9 @@ class Coordinator:
             for p in params:
                 p.grad = None
             n_i = 0
-            for x, labels in client.client_train_loader:
+            # 干净数据（无增强）：认证指标须确定性；未启用增强时即训练加载器本身
+            loader = getattr(client, 'train_eval_loader', client.client_train_loader)
+            for x, labels in loader:
                 x, labels = x.to(self.device), labels.to(self.device)
                 loss = torch.nn.functional.cross_entropy(scratch(x), labels, reduction='sum')
                 loss.backward()

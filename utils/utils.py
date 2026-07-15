@@ -6,6 +6,7 @@ from torchvision.datasets import ImageFolder
 from torchvision.datasets import CIFAR10, CIFAR100, EMNIST, MNIST
 from torchvision import transforms
 from transformers import MobileBertForSequenceClassification
+import torch
 import torch.optim as optim
 from models.cnn_model import CNNModel, LeafCNN1, LeNet, AlexNet, ResNet18, ResNet18GN, TinyViT, VGG16, ResNet50
 
@@ -109,6 +110,29 @@ def get_client_data_indices(root_dir, dataset_name, split_method, alpha):
         }
 
     return client_indices, num_clients
+
+
+class AugmentedDataset(torch.utils.data.Dataset):
+    """训练数据增强包装：RandomCrop(pad=4) + 水平翻转，作用在已 ToTensor 的张量上。
+
+    只包装训练 Subset；验证集、E_k 固定评测集、全批梯度评测（Ω/‖∇f‖²）一律
+    使用未包装的原始数据（标准做法：增强只进训练目标）。
+    """
+    def __init__(self, base):
+        self.base = base
+        self._tf = None
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, idx):
+        x, y = self.base[idx]
+        if self._tf is None:
+            self._tf = transforms.Compose([
+                transforms.RandomCrop(list(x.shape[-2:]), padding=4),
+                transforms.RandomHorizontalFlip(),
+            ])
+        return self._tf(x), y
 
 
 def get_optimizer(optimizer_name, parameters, lr):

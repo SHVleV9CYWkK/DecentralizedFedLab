@@ -85,8 +85,10 @@ class WCClient(Client):
         self.wc_kappa_g = float(h.get('wc_kappa_g', 1.0))
         self.lambda_hat_override = float(h.get('lambda_hat_override', -1.0))
 
-        # 固定评测集 E_k（§5.1-1：全程复用同一 E_k）
-        eval_subset = Subset(self.client_train_loader.dataset, list(range(n_eval)))
+        # 固定评测集 E_k（§5.1-1：全程复用同一 E_k）——用未增强的原始数据，
+        # 保证 ℓ_warm 与 f̂_k^loc 的确定性可比（增强只进训练目标）
+        eval_base = getattr(self, 'train_eval_dataset', self.client_train_loader.dataset)
+        eval_subset = Subset(eval_base, list(range(n_eval)))
         self._eval_loader = DataLoader(eval_subset, batch_size=self.bz, shuffle=False)
 
         # 持久状态

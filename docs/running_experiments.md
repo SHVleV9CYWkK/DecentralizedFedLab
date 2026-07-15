@@ -81,7 +81,8 @@ python main.py \
 | `MAIN_SCENARIOS` | 主表**按数据集**分配加入场景：**cifar10/cifar100 跑 `S1+S2`**（骨架），**emnist/tiny 只跑 `S1`**（广度）。消融 4 臂在所有数据集上完整保留 |
 | `COMMON` | 全部 run 共享的地板参数（GR1 同地板比较）：纯 SGD、常数调度、对称固定图、`lr=0.01`、`n_job=1` 等 |
 | `DATASETS` | 数据集 × 模型 × **轮数**：cifar10/LeNet/200、cifar100/ResNet18-GN/200、emnist/LeafCNN1/150、tiny/TinyViT/200。**轮数须足够长，使 Phase-1 在 τ_k=0.5T 前进入平台（Δ̂_k 稳定）、加入后窗口仍脱离 cap-active——这是组件 C 的前提**（短轮数下 V2/V4 不成立，见 §8） |
-| `ARMS` | 实验臂 = `fl_method` + WC 消融开关组合：`wc / w_only / c_only / cold / dfedavg / dfedsam / ellocal` |
+| `ARMS` | 实验臂 = `fl_method` + WC 消融开关组合：`wc / w_only / c_only / cold / dfedavg / ellocal`。论文标注 cold≡D-PSGD、w_only≡D-PSGD+aggregate-on-join；**dfedsam 已移除**（SAM 依赖动量，与无动量同地板不兼容，三数据集退化至随机） |
+| `LR_STAR` | 主表 v2 的调好地板 lr（G13 网格结果填入；None 时 G14 组不生成） |
 
 加入场景由两个辅助函数生成：
 
@@ -110,6 +111,8 @@ python main.py \
 | `G6_topology` | 12 | E15 邻居数、E20 谱隙 | ring / full / num_conn∈{4,10} |
 | `G7_alpha` | 30 | E19 异质性 | α ∈ {0.1, 1.0}（α=0.4 复用 G1） |
 | `G8_calib_probe` | 30 | 组件 C 诊断（cap-active 根因确认） | wc/w_only × conn6/full/cL1 × τ∈{0.5,0.9}T |
+| `G13_lrgrid_*` ×2 | 各 12 | 主表 v2 前置：cifar100/tiny 地板 lr 网格 | w_only × lr∈{0.03..0.001} × 增强 |
+| `G14_main_aug_*` ×2 | 60/30 | **主表 v2**：调好 lr* + 增强 + 预训练卷积初始化 | 6 臂；**lr\* 从 G13 落盘结果自动解析**（按平均最终准确率，要求 4 档×全种子完成；`LR_STAR` 手动值可覆盖）。同一条命令 `G13_... G14_...` 可整链跑通 |
 | `G9_grid_full` | 24 | **V2 off-cap**（conn6 版被 cap 污染，不可用于 V2） | full 拓扑 η 网格 + 校准参照 |
 | `G10_tau_full` | 24 | **V4 阶梯 off-cap**（论文 η̂-τ_k 图） | full 拓扑 τ∈{0.2..0.9}T |
 | `G11_kappa_full` | 12 | **E8/R5 off-cap**（capped 下 κ 被 min 吞掉，G5 κ 臂作废） | κ∈{1/16,1/4,4,16} |
