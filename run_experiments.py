@@ -153,6 +153,10 @@ ARMS = {
     'cold':    {'fl_method': 'wc', 'wc_warm_mode': 'cold', 'wc_calibrate': 0},
     'dfedavg': {'fl_method': 'dfedavg'},
     'ellocal': {'fl_method': 'ellocal'},
+    # 不协作下界：完全不参与混合（动机检验——加入网络 vs 自己单练）。
+    # 注意其 Ω/M 语义特殊：各客户端轨迹独立，共识误差与"全网平均模型的梯度"
+    # 不再刻画一个协作系统，论文中按参考线报告 acc、不与协作臂比 M。
+    'localonly': {'fl_method': 'localonly'},
 }
 
 
