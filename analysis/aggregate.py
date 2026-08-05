@@ -27,6 +27,8 @@ import os
 
 import pandas as pd
 
+from analysis.paper_figures import paper_arm_label
+
 # 参与 arm 标签的配置键（默认值不显示，保持标签紧凑）
 ARM_DEFAULTS = {
     'wc_warm_mode': 'neighbor',
@@ -217,7 +219,11 @@ def write_figures(rounds_df, out_dir):
             fig, ax = plt.subplots(figsize=(7, 4.2))
             for arm, adf in sub.groupby('arm'):
                 curve = adf.groupby('round')[column].mean()
-                ax.plot(curve.index, curve.values, label=arm, linewidth=1.2)
+                # 图例用论文里的臂名（Init + calib. / Calib. only / Init only /
+                # D-PSGD），不用代码里的 wc / w_only / c_only / cold，免得导出的
+                # 图和正文对不上。映射表在 analysis/paper_figures.py。
+                ax.plot(curve.index, curve.values,
+                        label=paper_arm_label(arm), linewidth=1.2)
             if logy:
                 ax.set_yscale('log')
             ax.set_xlabel('round')
