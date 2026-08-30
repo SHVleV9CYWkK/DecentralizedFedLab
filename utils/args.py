@@ -8,10 +8,15 @@ def parse_args_for_dataset():
     parser.add_argument('--clients_num', type=int, default=10, help='number of clients')
     parser.add_argument('--n_clusters', type=int, default=-1, help='number of clusters using clusters split method')
     parser.add_argument('--seed', type=int, default=42, help='random seed')
-    parser.add_argument('--split_method', type=str, default='train', choices=['dirichlet', 'label', 'clusters', 'even'],
+    parser.add_argument('--split_method', type=str, default='train',
+                        choices=['dirichlet', 'label', 'clusters', 'even',
+                                 'dirfix20', 'dirfix50', 'dirfix100', 'dirfix200'],
                         help='The methods of splitting the data set to generate non-IID are dirichlet and label '
                              'respectively. dirichlet is using dirichlet distributed. label indicates that the client '
-                             'owns a subset of label')
+                             'owns a subset of label. dirfix<N> = Dirichlet label proportions with a FIXED per-client '
+                             'shard size (n-sweep: only n varies, per-round work held equal)')
+    parser.add_argument('--shard_size', type=int, default=250,
+                        help='dirfix<N> only: total samples per client (train+val); train = (1-test_ratio)*shard_size')
     parser.add_argument(
         '--alpha', type=float, default=0.4,
         help='Parameters that control the degree of non-IID.'
@@ -70,7 +75,9 @@ def parse_args():
     parser.add_argument('--n_clusters', type=int, default=16, help='The number of weight clusters used by DKM')
     parser.add_argument('--base_decay_rate', type=float, default=0.5, help='Momentum updates the base attenuation rate locally')
     parser.add_argument('--minimum_join_rounds', type=int, default=25, help='Number of rounds to start joining a new client')
-    parser.add_argument('--temp_client_dist', type=str, default='single', choices=['uniform', 'even', 'normal', 'single'], help='Temporarily join the client distribution')
+    parser.add_argument('--temp_client_dist', type=str, default='single', choices=['uniform', 'even', 'normal', 'single', 'none'], help='Temporarily join the client distribution. "none" = no late joiner at all (all clients present from round 0; the missing control for the persistent-floor claim)')
+    parser.add_argument('--join_round_max', type=int, default=-1, help='Upper bound of the uniform arrival window; -1 = n_rounds. Used to place all arrivals inside the plateau region and leave a fixed-membership tail window')
+    parser.add_argument('--metric_all_clients', type=int, default=0, help='1 = evaluate the stationarity gradient of f_n over ALL clients (including those that never join), while theta-bar stays the average over participating clients. Needed so a never-joining configuration is measured against the same f_n as the others')
     parser.add_argument('--lambda_kd', type=float, default=0.1, help='Distillation strength')
     parser.add_argument('--lambda_alignment', type=float, default=0.1, help='Alignment strength')
     parser.add_argument('--lambda_feature_kd', type=float, default=0.1, help='Distillation strength acting on feature parts')
@@ -88,6 +95,7 @@ def parse_args():
     parser.add_argument('--eval_every', type=int, default=5, help='Rounds between stationarity gradient-norm evaluations (<=0 disables)')
     # —— 拓扑 ——
     parser.add_argument('--topology', type=str, default='random', choices=['random', 'ring', 'full'], help='Communication topology family (symmetric graphs only for ring/full)')
+    parser.add_argument('--lambda_estimator', type=str, default='exact', choices=['exact', 'power5', 'power10', 'power20', 'surrogate'], help='Source of lambda_n: exact eigendecomposition (research convenience), m-round power iteration (decentralizable, under-estimates), or degree/diameter surrogate (no exchange, over-estimates)')
     # —— WC 消融开关（实验清单 E4/E5/E6/E8/E9/E14）——
     parser.add_argument('--wc_warm_mode', type=str, default='neighbor', choices=['neighbor', 'global_sim', 'cold', 'fitted'], help='WC warm start: neighbor=W-N (default), global_sim=W-G, cold=no warm start, fitted=deliberate R-W1 violation (E5)')
     parser.add_argument('--wc_calibrate', type=int, default=1, help='WC: 1 = calibrate eta_hat at join (component C), 0 = keep default lr (W-only arm)')
@@ -96,14 +104,17 @@ def parse_args():
     parser.add_argument('--wc_kappa_g', type=float, default=1.0, help='WC: multiplicative perturbation on G_n estimate (E8 miscalibration robustness)')
     parser.add_argument('--c_L', type=float, default=2.0, help='WC: conservative factor on the L estimate (must be >=1; E14 sweeps it)')
     parser.add_argument('--lambda_hat_override', type=float, default=-1.0, help='WC: if >0, force lambda_hat to this value, bypassing the exact eigenvalue (E14)')
+    parser.add_argument('--wc_force_eps1_zero', type=int, default=0, help='WC: 1 = force the Phase-1 residual estimate to 0, i.e. take the plateau branch of the calibration by fiat. The n-dependence of G_n enters only through the fallback term (n-1)*eps1, so this is the arm on which the "network size cancels" claim can be measured')
     parser.add_argument('--seed', type=int, default=42, help='random seed')
     parser.add_argument('--log_dir', type=str, default='logs', help='log directory')
     parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda', 'mps'],
                         help='determine the computing platform')
-    parser.add_argument('--split_method', type=str, choices=['dirichlet', 'label', 'clusters', 'even'],
+    parser.add_argument('--split_method', type=str,
+                        choices=['dirichlet', 'label', 'clusters', 'even',
+                                 'dirfix20', 'dirfix50', 'dirfix100', 'dirfix200'],
                         help='The methods of splitting the data set to generate non-IID are dirichlet and label '
                              'respectively. dirichlet is using dirichlet distributed. label indicates that the client '
-                             'owns a subset of label')
+                             'owns a subset of label. dirfix<N> = fixed per-client shard size (n-sweep)')
     parser.add_argument('--dataset_indexes_dir', type=str, default='client_indices',
                         help='The root directory of the local client dataset index')
 

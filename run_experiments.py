@@ -360,6 +360,123 @@ def build_groups():
                                   'lr': lr_star, 'augment': 1, 'seed': seed}))
         groups[f'G14_main_aug_{ds_key}'] = runs
 
+    # ---- G15：CIFAR-10 的地板 lr 选择（消除主表列间的调参不对称）----
+    # CIFAR-10 的 η_pre=0.01 是 LeNet 默认值、从未调过，而 cifar100/tiny 经 G13 调过。
+    # 用 CIFAR-10 自己的（无增强）设定跑同样的四常数选择，去掉这个不对称。
+    # 注意与 G2 的区别：G2 扫 η_c·2^-j（顶到 0.0019，研究 M(η) 在容许上限附近的形状），
+    # 本组扫绝对常数（含 0.01/0.03，研究 η_pre 的选择），两者覆盖不相交的区间。
+    runs = []
+    for lr in GRID_LRS:
+        for seed in SEEDS_SMALL:
+            runs.append((f"lr{lr}_s{seed}",
+                         {**COMMON, **DATASETS['cifar10'], **s1(T10),
+                          **ARMS['w_only'], 'lr': lr, 'seed': seed}))
+    groups['G15_lrgrid_cifar10'] = runs
+
+    # ---- G16：用去中心化谱隙估计替代精确特征分解 ----
+    # 论文诚实声明：全部数字的 λ̂ 来自全谱特征分解，而部署中无客户端持有 W^t；
+    # 稀疏图上 η̂=(1−λ̂)/(7L̂) 恒等于封顶值，故整条规则在该分支上是 λ̂ 的函数。
+    # 幂迭代（m 轮 gossip）低估 λ → 抬高 η_c（越界风险）；surrogate 高估 → 安全但保守。
+    # exact 行由既有 G2/G8 的 conn6 默认配置提供，此处只跑替代估计。
+    runs = []
+    for est in ('power5', 'power10', 'power20', 'surrogate'):
+        for seed in SEEDS_SMALL:
+            runs.append((f"specest_{est}_s{seed}",
+                         {**COMMON, **DATASETS['cifar10'], **s1(T10),
+                          'fl_method': 'wc', 'lambda_estimator': est, 'seed': seed}))
+    groups['G16_specest'] = runs
+
+    # ================= 内审补充实验 E1–E4 =================
+    # 共同点：全部使用固定步长臂或成对的校准臂，指标以 across-seed 标准差为判据
+    # （五个配对样本下 Wilcoxon 最小可达 p=0.0625，故不报 p 值）。
+
+    # ---- E1：无迟到者对照（论文标题级主张目前零实验支撑）----
+    # 摘要/引言/§3.2 都称 floors "正是无迟到者网络已付的"，但没有任何一次 run 是
+    # 全体客户端从第 0 轮在场的。四个配置共享划分、图与客户端 k（RNG 已对齐），
+    # 只有 join 时刻不同。**必须用固定步长臂**：A0 无 join → 永不校准，若用 wc 臂
+    # 则 A0 停在 0.01 而 A1/A2 切到 ~0.0019，5 倍步长差会直接污染 floor 比较
+    # （floor ∝ η）。故全部用 w_only（warm init + 固定步长），A0/A3 下退化为 D-PSGD。
+    # 比较落在尾窗 M_tail=[0.9T,T)：A0 从 0 轮就用全部数据，全窗必然领先，
+    # 那是 term (i) inherited gap，不是 floor。
+    runs = []
+    e1_base = {**COMMON, **DATASETS['cifar10'], **ARMS['w_only']}
+    for cfg, extra in (
+            ('A0_nojoin', {'temp_client_dist': 'none', 'minimum_join_rounds': 0}),
+            ('A1_join30', {**s1(T10, 0.3)}),
+            ('A2_join60', {**s1(T10, 0.6)}),
+            # A3：k 永不加入——网络下降 f_{n−1} 而度量 f_n（目标改变的可视化），
+            # 故必须打开 metric_all_clients，否则测的是 f_{99}，与其余三配置不可比
+            ('A3_never', {**s1(T10, 1.0), 'metric_all_clients': 1}),
+    ):
+        for seed in SEEDS:
+            runs.append((f"{cfg}_s{seed}", {**e1_base, **extra, 'seed': seed}))
+    groups['E1_nojoiner'] = runs
+
+    # ---- E2：把 M-tuned floor 的网格补完 ----
+    # A9 自己写着 2.34 / 1.54 是 M-tuned floor 的**上界**而非 floor 本身，
+    # "how far it fails to survive we do not know"——开着这个洞交上去，审稿人会直接
+    # 读成"规则在它自己针对的指标上没有收益"。向上延伸定步长网格定位内部极小。
+    # 停止规则（事前固定）：连续两点 M 上升 / 准确率跌破 no-collab 参照
+    # （CIFAR-100 0.382，Tiny 0.306）/ 出现 NaN 即发散——三者皆为可接受的终点。
+    runs = []
+    for ds_key in ('cifar100', 'tiny_imagenet'):
+        ds = DATASETS[ds_key]
+        for lr in (0.1, 0.3):
+            for seed in SEEDS_SMALL:
+                runs.append((f"{ds_key}_lr{lr}_s{seed}",
+                             {**COMMON, **ds, **s1(ds['n_rounds']), **ARMS['w_only'],
+                              'lr': lr, 'augment': 1, 'seed': seed}))
+    groups['E2_mgrid'] = runs
+
+    # ---- E3：n-sweep（把 init rule 从 null result 变成 positive result）----
+    # 目的不是验 (n−1)/n² 的算术（恒等式已验到 1e-15），而是三件事：
+    #   (1) 效应随 n 减小而**出现**，比"到处看不见"强得多；
+    #   (2) 测 prop:calib 的 n 消去——论文亲口写着该主张 "rests on no measurement of ours"；
+    #   (3) 区分 n^{-1} 与 n^{-2}（两条律只在 n=100 交会，正是唯一测过的点）。
+    # 协议改动（须在论文声明）：固定 per-client shard=250（train 200 + val 50），
+    # 每个 n 单独抽一次 Dirichlet——现协议固定总量 50k，n=20 每轮 39 个 minibatch 而
+    # n=200 只有 4 个，十倍的 per-round 工作量差会淹没 n 的效应。固定 shard 后
+    # batch=64 + drop_last 使每个 n 都恰好 3 个 minibatch，工作量自动相等，
+    # 故**不需要**额外的 local_steps 参数。n=200 恰好用满 CIFAR-10 的 50000。
+    # 不跑任何外部 baseline（DFedAvg/EL/no-collab 都不定义 join），但 cold 对照必跑：
+    # init rule 的全部主张都是配对差，孤立的 warm Ω^{τ_k} 不可解释。
+    runs = []
+    e3_configs = {
+        'C1_cold_fixed': ARMS['cold'],                                  # shock 与可见性的配对基准
+        'C2_warm_fixed': ARMS['w_only'],
+        'C3_warm_calib': ARMS['wc'],                                    # 真实回退路径：η̂ ∝ √n
+        'C4_warm_calib_forced': {**ARMS['wc'], 'wc_force_eps1_zero': 1},  # 强制 plateau 分支：n 应消去
+    }
+    for n_clients in (20, 50, 100, 200):
+        for cfg_name, cfg in e3_configs.items():
+            for seed in SEEDS_SMALL:
+                runs.append((f"n{n_clients}_{cfg_name}_s{seed}",
+                             {**COMMON, **DATASETS['cifar10'], **s1(T10, 0.5), **cfg,
+                              'split_method': f'dirfix{n_clients}', 'seed': seed}))
+    groups['E3_nsweep'] = runs
+
+    # ---- E4：staggered 反转的诊断（2×2，其中一维是零成本重分析）----
+    # app:extra:s2 报告最现实场景里 ΔM 从 −0.70 翻成 +0.67，并明说两个候选解释
+    # "not separated by any measurement we have"。两维：
+    #   到达窗口：现状 (0.25T,T]（首个到达落在 precondition 失效区）→ 新 (0.5T,0.8T]
+    #             （全部落在 plateau 区，且尾部留出成员固定窗）——需要新 run；
+    #   M 的窗口：从首个到达起算（现状）→ 从最后一个到达起算（成员固定）——
+    #             summary 已落盘 M_window_last_join，**零成本重分析**。
+    # 四种结局都可写，这是本轮风险最低的一组。
+    runs = []
+    ds = DATASETS['cifar100']
+    lr_star = resolve_lr_star('cifar100')
+    for arm_name in ('wc', 'w_only', 'c_only', 'cold'):
+        for seed in SEEDS:
+            runs.append((f"lateS2_{arm_name}_s{seed}",
+                         {**COMMON, **ds, **ARMS[arm_name], 'augment': 1,
+                          'lr': lr_star if lr_star else 0.01,
+                          'temp_client_dist': 'uniform', 'delay_client_ratio': 0.2,
+                          'minimum_join_rounds': int(0.5 * ds['n_rounds']),
+                          'join_round_max': int(0.8 * ds['n_rounds']),
+                          'seed': seed}))
+    groups['E4_stagger_late'] = runs
+
     return groups
 
 

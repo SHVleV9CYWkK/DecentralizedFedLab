@@ -179,14 +179,24 @@ def get_lr_scheduler(optimizer, scheduler_name, n_rounds=None, gated_learner=Fal
     else:
         raise NotImplementedError("Other learning rate schedulers are not implemented")
 
-def get_client_delay_info(num_clients, delay_client_ratio, minimum_round, total_rounds, dist_type="single", preset_client_id=-1):
-    if total_rounds <= minimum_round:
-        raise ValueError("total_rounds must be greater than minimum_round")
+def get_client_delay_info(num_clients, delay_client_ratio, minimum_round, total_rounds, dist_type="single",
+                          preset_client_id=-1, join_round_max=-1):
+    # minimum_round == total_rounds 是合法的"永不加入"（E1 的 A3 配置）：join 轮落在
+    # 视界之外，Coordinator 的 _add_new_training_clients 永不触发。
+    if total_rounds < minimum_round:
+        raise ValueError("total_rounds must be greater than or equal to minimum_round")
     if not (0 <= delay_client_ratio <= 1):
         raise ValueError("delay_client_ratio must be between 0 and 1")
 
     client_delay_info = {}
     client_ids = list(range(num_clients))
+
+    if dist_type.lower() == "none":
+        # 无迟到者：全部客户端从第 0 轮在场（E1 的 A0 对照）。
+        # 仍然抽一次并丢弃，使随机数流与 "single" 对齐——否则后续的图生成会拿到
+        # 不同的 RNG 状态，A0 与 A1/A2 的拓扑就不再是同一张图，配对设计失效。
+        random.choice(client_ids)
+        return client_delay_info
 
     if dist_type.lower() == "single":
         if num_clients < 1:
@@ -202,9 +212,12 @@ def get_client_delay_info(num_clients, delay_client_ratio, minimum_round, total_
         delayed_client_ids = set(random.sample(client_ids, num_delayed))
 
         if dist_type.lower() == "uniform":
+            # join_round_max > 0 时把到达窗口收紧到 (minimum_round, join_round_max]
+            # （E4：把全部到达移进 plateau 区，并在尾部留出成员固定的窗口）
+            upper = join_round_max if join_round_max > 0 else total_rounds
             for cid in client_ids:
                 if cid in delayed_client_ids:
-                    join_round = random.randint(minimum_round + 1, total_rounds)
+                    join_round = random.randint(minimum_round + 1, upper)
                     client_delay_info[cid] = join_round
 
         elif dist_type.lower() == "even":

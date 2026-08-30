@@ -84,6 +84,7 @@ class WCClient(Client):
         self.wc_eta_frac = float(h.get('wc_eta_frac', 0.0))
         self.wc_kappa_g = float(h.get('wc_kappa_g', 1.0))
         self.lambda_hat_override = float(h.get('lambda_hat_override', -1.0))
+        self.wc_force_eps1_zero = bool(int(h.get('wc_force_eps1_zero', 0)))
 
         # 固定评测集 E_k（§5.1-1：全程复用同一 E_k）——用未增强的原始数据，
         # 保证 ℓ_warm 与 f̂_k^loc 的确定性可比（增强只进训练目标）
@@ -105,6 +106,7 @@ class WCClient(Client):
         self.lambda_exact = None         # Coordinator 下发的精确 λ̂（研究模式）
         self.n_active = None             # 当前活跃客户端数（§11 顺序加入的 n_post）
         self._post_sched = None          # 校准后调度状态（E9 调度臂）
+        self._last_g_n = None            # 最近一次校准用的 Ĝ_n（落盘诊断）
         self._applied_events = set()     # 已生效的 JOIN（按 tau_k）
 
     # ---------------- 框架接口 ----------------
@@ -234,10 +236,14 @@ class WCClient(Client):
             self.model.load_state_dict(theta_warm)
 
         # —— 平台门（§5.2）：P=1 → ε̂₁:=0（n 消去）；否则回退 (b)（声明 3）——
-        if P:
-            eps1 = 0.0
+        # gate_path 记录实际走的分支：G_n 的 n 依赖只从回退项 (n−1)·ε̂₁ 进入，
+        # 因此"n 消去"只在 plateau/forced 分支上成立，必须逐 run 落盘可分辨。
+        if self.wc_force_eps1_zero:
+            eps1, gate_path = 0.0, 'forced'
+        elif P:
+            eps1, gate_path = 0.0, 'plateau'
         else:
-            eps1 = sum(m['eps1_proxy'] for m in metas) / len(metas)
+            eps1, gate_path = sum(m['eps1_proxy'] for m in metas) / len(metas), 'fallback'
 
         # —— J2：本地失配估计 Δ̂_k（Algorithm 7）——
         delta_k = None
@@ -251,10 +257,13 @@ class WCClient(Client):
         lam_post = self._lam_post()
         n_post = self.n_active if self.n_active is not None else self.n_clients
         T_total = self.n_rounds
+        steps_per_round = max(1, self.epochs * len(self.client_train_loader))
         event_bus.emit('wc_join', k_id=self.id, tau_k=tau_k, Delta_k=delta_k,
                        eps1=eps1, P=P, L=L_hat, sigma2=s2_hat, lam_post=lam_post,
                        n_post=n_post, warm_mode=self.wc_warm_mode,
-                       calibrate=self.wc_calibrate)
+                       calibrate=self.wc_calibrate, gate_path=gate_path,
+                       n_neighbors=len(sds), shard_size=self.train_dataset_len,
+                       local_steps=steps_per_round)
 
         if not self.wc_calibrate:
             return
@@ -263,12 +272,12 @@ class WCClient(Client):
                   f"保持默认步长 {self.lr}")
             return
 
-        steps_per_round = max(1, self.epochs * len(self.client_train_loader))
         event = {
             'k_id': self.id, 'tau_k': tau_k, 'T_total': T_total,
             'Delta_k': delta_k, 'eps1': eps1, 'P': P,
             'L': L_hat, 'sigma2': s2_hat, 'lam_post': lam_post,
             'n_post': n_post, 'steps_per_round': steps_per_round,
+            'gate_path': gate_path,
         }
         # —— J3：洪泛 JOIN（公告板模拟，声明 1）；τ_k 轮所有客户端在 train() 入口生效 ——
         WCClient._join_board.setdefault(tau_k, []).append(event)
@@ -344,8 +353,12 @@ class WCClient(Client):
                 self._post_sched = {'kind': self.wc_post_schedule, 'eta_hat': eta,
                                     'eta_c': eta_c, 'tau': tau,
                                     'T_total': events[0]['T_total']}
-                # 每个客户端都上报切换值 → E2 全网一致性核对数据
-                event_bus.emit('wc_eta_switch', client_id=self.id, tau_k=tau, eta=eta)
+                # 每个客户端都上报切换值 → 全网一致性核对；同时落盘校准的全部输入，
+                # 使 η̂ 的 n 依赖（经 G_n 的回退项）可以逐 run 复算
+                event_bus.emit('wc_eta_switch', client_id=self.id, tau_k=tau, eta=eta,
+                               eta_c=eta_c, cap_active=bool(eta >= eta_c - 1e-15),
+                               gate_path=events[0].get('gate_path'),
+                               G_n=self._last_g_n, n_post=events[0]['n_post'])
                 if verbose:
                     print(f"[WC] switch: 全网于 t={tau} 同步切换到常数步长 eta_hat={eta:.3e}")
 
@@ -363,6 +376,7 @@ class WCClient(Client):
         # 同轮并发到达（§11）：Ĝ_n = Σ_j Δ̂_kj + (n_post − m)·ε̂₁；平台门下 ε̂₁=0 → n 消去
         g_n = sum(e['Delta_k'] for e in events) + max(0, n_post - m) * eps1
         g_n *= self.wc_kappa_g                          # E8 κ 扰动（静态配置，全网一致）
+        self._last_g_n = g_n                            # 落盘用：n 依赖只从 (n−m)·ε̂₁ 进入
 
         eta_c = (1.0 - lam) / (7.0 * L)                 # 封顶 η_c，不可逾越 [T]
         if self.wc_eta_frac > 0:                        # E6 网格臂：η̂ := frac·η_c（规范 V2）

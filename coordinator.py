@@ -36,6 +36,8 @@ class Coordinator:
         self.gossip = args.gossip != 0
         self.symmetry = args.symmetry
         self.topology = getattr(args, 'topology', 'random')
+        self.lambda_estimator = getattr(args, 'lambda_estimator', 'exact')
+        self.metric_all_clients = bool(getattr(args, 'metric_all_clients', 0))
         self.n_rounds = args.n_rounds
         self.wc_warm_mode = getattr(args, 'wc_warm_mode', 'neighbor')
         self.connected_graph = None
@@ -211,7 +213,14 @@ class Coordinator:
         return graph
 
     def _lambda_hat(self, active_ids, degrees):
-        """活跃诱导子图上 lazy Metropolis 矩阵 W=(I+M)/2 的第二大特征值（研究模式精确值）。"""
+        """活跃诱导子图上 lazy Metropolis 矩阵 W=(I+M)/2 的 λ_n 估计。
+
+        lambda_estimator 决定来源（默认 exact = 研究模式精确特征分解）：
+          exact       全谱特征分解——部署中无客户端持有 W^t，是研究便利；
+          power<m>    ‖W−J‖₂ 的 m 轮幂迭代（可作为 gossip 去中心化实现），
+                      截断会 **低估** λ_n → 抬高 η_c（越界风险，Lemma kappa 不覆盖）；
+          surrogate   1−2/(n·diam)，无需任何交换，**高估**方向 → 保守但安全。
+        """
         ids = sorted(active_ids)
         n = len(ids)
         if n <= 1:
@@ -226,8 +235,40 @@ class Coordinator:
         for i in range(n):
             M[i][i] = 1.0 - M[i].sum()
         W = (np.eye(n) + M) / 2.0
-        eigenvalues = np.linalg.eigvalsh(W)
-        return float(eigenvalues[-2])
+
+        est = self.lambda_estimator
+        if est == 'surrogate':
+            return float(min(1.0 - 2.0 / (n * max(self._graph_diameter(ids), 1)), 1.0 - 1e-12))
+        if est.startswith('power'):
+            m = int(est[5:])
+            A = W - np.ones((n, n)) / n
+            rng = np.random.default_rng(0)          # 固定起始向量：同图同估计（可复现）
+            v = rng.standard_normal(n)
+            v /= np.linalg.norm(v)
+            for _ in range(m):
+                v = A @ v
+                nv = np.linalg.norm(v)
+                if nv < 1e-30:
+                    break
+                v /= nv
+            return float(np.linalg.norm(A @ v))
+        return float(np.linalg.eigvalsh(W)[-2])
+
+    def _graph_diameter(self, ids):
+        """活跃诱导子图直径（BFS）；surrogate 估计用。"""
+        id_set = set(ids)
+        best = 0
+        for src in ids:
+            dist = {src: 0}
+            queue = [src]
+            while queue:
+                u = queue.pop(0)
+                for v in id_set:
+                    if v not in dist and self.connected_graph[u][v]:
+                        dist[v] = dist[u] + 1
+                        queue.append(v)
+            best = max(best, max(dist.values()))
+        return best
 
     def _refresh_topology_info(self):
         """向客户端下发当前活跃图的度数与精确 λ̂。
@@ -277,9 +318,17 @@ class Coordinator:
         return omega
 
     def stationarity_gradnorm2(self):
-        """||∇f_n(θ̄)||²：全批本地数据、客户端等权平均、float64 聚合。"""
+        """||∇f_n(θ̄)||²：全批本地数据、客户端等权平均、float64 聚合。
+
+        θ̄ 恒为**参与训练**客户端的平均（网络的迭代点）。梯度的求平均集合由
+        metric_all_clients 决定：默认同为参与者；置 1 时对**全部**客户端求平均，
+        使"某客户端永不加入"的配置仍然被同一个 f_n 度量——网络下降的是 f_{n-1}
+        而度量的是 f_n，这正是目标改变本身。
+        """
         clients = self.participated_training_clients
         mean_sd, _ = self._consensus_stats(clients)
+        if self.metric_all_clients:
+            clients = [c for c in self.all_clients if c is not None]
         if mean_sd is None:
             return None
         scratch = deepcopy(self.init_model).to(self.device)

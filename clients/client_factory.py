@@ -66,7 +66,7 @@ def create_client(num_client, args, dataset_index, full_dataset, device):
         train_hyperparam['n_clients'] = num_client
         for key in ('lambda_hat', 'eta_min_frac', 'zeta2', 'wc_warm_mode', 'wc_calibrate',
                     'wc_post_schedule', 'wc_eta_frac', 'wc_kappa_g', 'c_L',
-                    'lambda_hat_override'):
+                    'lambda_hat_override', 'wc_force_eps1_zero'):
             train_hyperparam[key] = getattr(args, key)
 
     else:

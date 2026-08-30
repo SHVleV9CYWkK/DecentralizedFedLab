@@ -2,7 +2,10 @@ import random
 import torch
 from itertools import cycle
 from utils.args import *
-from sklearn.model_selection import train_test_split
+try:                                    # 仅旧的切分函数需要；dirfix* 用 numpy 自行划分
+    from sklearn.model_selection import train_test_split
+except ImportError:
+    train_test_split = None
 from utils.utils import *
 from torch.utils.data import Subset
 
@@ -43,6 +46,43 @@ def split_data_with_dirichlet(num_clients, a, dataset, test_size, frac, seed):
     for i in range(num_clients):
         train_idx, val_idx = train_test_split(data_indices[i], test_size=test_size, random_state=seed)
         train_val_split[i] = {'train': train_idx, 'val': val_idx}
+    return train_val_split
+
+
+def split_data_dirichlet_fixed_shard(num_clients, alpha, dataset, shard_size, test_size, seed):
+    """每客户端固定 shard_size 个样本，标签比例 ~ Dir(alpha)（n-sweep 专用）。
+
+    与 split_data_with_dirichlet 的区别：后者把每个标签池按 Dir 切给客户端，shard 大小
+    因而不等；扫 n 时 shard 大小会随 n 变化，per-round 工作量与本地目标同时在动，
+    n 的效应无法分离。此处固定 shard 大小，只让 n 变化。
+    标签池抽空时从剩余最大的池子补齐，保证每个客户端恰好 shard_size 个样本。
+    """
+    rng = np.random.default_rng(seed)
+    targets = np.array(dataset.targets)
+    n_labels = len(dataset.classes)
+    pools = {c: list(rng.permutation(np.where(targets == c)[0])) for c in range(n_labels)}
+    total = sum(len(v) for v in pools.values())
+    if total < num_clients * shard_size:
+        raise ValueError(f"data insufficient: need {num_clients * shard_size}, have {total}")
+
+    train_val_split = {}
+    for i in range(num_clients):
+        proportions = rng.dirichlet(np.repeat(alpha, n_labels))
+        counts = rng.multinomial(shard_size, proportions)
+        picked = []
+        for c in range(n_labels):
+            take = min(int(counts[c]), len(pools[c]))
+            for _ in range(take):
+                picked.append(pools[c].pop())
+        while len(picked) < shard_size:                       # label pool exhausted -> top up
+            avail = [c for c in range(n_labels) if pools[c]]
+            biggest = max(avail, key=lambda c: len(pools[c]))
+            picked.append(pools[biggest].pop())
+        idx = np.array(picked, dtype=int)
+        # 用 numpy 做 train/val 划分（不引入 sklearn 依赖；FL 环境中未安装）
+        rng.shuffle(idx)
+        n_val = int(round(len(idx) * test_size))
+        train_val_split[i] = {'train': idx[n_val:], 'val': idx[:n_val]}
     return train_val_split
 
 
@@ -253,7 +293,10 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
 
     full_dataset = load_dataset(args.dataset_name)
-    if args.split_method == "dirichlet":
+    if args.split_method.startswith("dirfix"):
+        indices = split_data_dirichlet_fixed_shard(args.clients_num, args.alpha, full_dataset,
+                                                   args.shard_size, args.test_ratio, args.seed)
+    elif args.split_method == "dirichlet":
         indices = split_data_with_dirichlet(args.clients_num, args.alpha, full_dataset, args.test_ratio, args.frac,
                                             args.seed)
     elif args.split_method == "label":

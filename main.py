@@ -75,6 +75,17 @@ def execute_fed_process(coordinator, args, run_logger):
         first = f'M_window_tau{join_rounds[0]}'
         if first in summary:
             summary['M_window'] = summary[first]
+        last = f'M_window_tau{join_rounds[-1]}'
+        if last in summary:
+            # 成员固定后的窗口：S2 下 [τ_first, T) 含后续 join，超出 Phase-2 界的范围
+            summary['M_window_last_join'] = summary[last]
+    # 尾窗 M：持久 floor 的比较必须落在这里——它对无 join 的配置同样有定义，
+    # 而 M_window 没有（floor 主张要求的对照组正是无迟到者网络）。
+    tail_start = int(0.9 * args.n_rounds)
+    tail = [g for (r, g) in gradnorm_samples if r >= tail_start and g is not None]
+    if tail:
+        summary['M_tail'] = sum(tail) / len(tail)
+        summary['M_tail_start'] = tail_start
     return summary
 
 
@@ -100,7 +111,8 @@ def execute_experiment(args, device):
 
         client_delay = get_client_delay_info(
             num_clients, args.delay_client_ratio, args.minimum_join_rounds, args.n_rounds,
-            args.temp_client_dist, args.set_single_delay_client)
+            args.temp_client_dist, args.set_single_delay_client,
+            join_round_max=getattr(args, 'join_round_max', -1))
         run_logger.save_config('client_delay', {str(k): v for k, v in client_delay.items()})
 
         coordinator = Coordinator(clients, model, device, client_delay, args)
