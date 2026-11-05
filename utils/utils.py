@@ -6,8 +6,9 @@ from torchvision.datasets import ImageFolder
 from torchvision.datasets import CIFAR10, CIFAR100, EMNIST, MNIST
 from torchvision import transforms
 from transformers import MobileBertForSequenceClassification
+import torch
 import torch.optim as optim
-from models.cnn_model import CNNModel, LeafCNN1, LeNet, AlexNet, ResNet18, VGG16, ResNet50
+from models.cnn_model import CNNModel, LeafCNN1, LeNet, AlexNet, ResNet18, ResNet18GN, TinyViT, VGG16, ResNet50
 
 
 def load_dataset(dataset_name):
@@ -54,6 +55,8 @@ def load_model(model_name, num_classes):
         model = AlexNet(num_classes)
     elif model_name == 'resnet18':
         model = ResNet18(num_classes)
+    elif model_name == 'resnet18gn':
+        model = ResNet18GN(num_classes)
     elif model_name == 'resnet50':
         model = ResNet50(num_classes)
     elif model_name == 'vgg16':
@@ -64,6 +67,9 @@ def load_model(model_name, num_classes):
         model = LeafCNN1(num_classes)
     elif model_name == 'lenet':
         model = LeNet(num_classes)
+    elif model_name in ('tinyvit', 'tiny_vit'):
+        # BN→GN + num_classes 头；从随机初始化训练（见 models/cnn_model.py:TinyViT）
+        model = TinyViT(num_classes)
     elif model_name == 'mobilebart':
         model = MobileBertForSequenceClassification.from_pretrained("lordtt13/emo-mobilebert",
                                                                     num_labels=num_classes,
@@ -106,12 +112,37 @@ def get_client_data_indices(root_dir, dataset_name, split_method, alpha):
     return client_indices, num_clients
 
 
+class AugmentedDataset(torch.utils.data.Dataset):
+    """训练数据增强包装：RandomCrop(pad=4) + 水平翻转，作用在已 ToTensor 的张量上。
+
+    只包装训练 Subset；验证集、E_k 固定评测集、全批梯度评测（Ω/‖∇f‖²）一律
+    使用未包装的原始数据（标准做法：增强只进训练目标）。
+    """
+    def __init__(self, base):
+        self.base = base
+        self._tf = None
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, idx):
+        x, y = self.base[idx]
+        if self._tf is None:
+            self._tf = transforms.Compose([
+                transforms.RandomCrop(list(x.shape[-2:]), padding=4),
+                transforms.RandomHorizontalFlip(),
+            ])
+        return self._tf(x), y
+
+
 def get_optimizer(optimizer_name, parameters, lr):
     if optimizer_name == "adam":
         return optim.Adam(parameters, lr=lr)
 
     elif optimizer_name == "sgd":
-        return optim.SGD(parameters, lr=lr, momentum=0.9)
+        # momentum=0：同地板比较（GR1）。动量使有效步长≈η/(1−β)（0.9 时≈10η），
+        # 与式 (U) 的纯 SGD 步不同环境；全部臂统一无动量
+        return optim.SGD(parameters, lr=lr, momentum=0.1)
 
     elif optimizer_name == "adamw":
         return optim.AdamW(parameters, lr=lr)
@@ -148,14 +179,24 @@ def get_lr_scheduler(optimizer, scheduler_name, n_rounds=None, gated_learner=Fal
     else:
         raise NotImplementedError("Other learning rate schedulers are not implemented")
 
-def get_client_delay_info(num_clients, delay_client_ratio, minimum_round, total_rounds, dist_type="single", preset_client_id=-1):
-    if total_rounds <= minimum_round:
-        raise ValueError("total_rounds must be greater than minimum_round")
+def get_client_delay_info(num_clients, delay_client_ratio, minimum_round, total_rounds, dist_type="single",
+                          preset_client_id=-1, join_round_max=-1):
+    # minimum_round == total_rounds 是合法的"永不加入"（E1 的 A3 配置）：join 轮落在
+    # 视界之外，Coordinator 的 _add_new_training_clients 永不触发。
+    if total_rounds < minimum_round:
+        raise ValueError("total_rounds must be greater than or equal to minimum_round")
     if not (0 <= delay_client_ratio <= 1):
         raise ValueError("delay_client_ratio must be between 0 and 1")
 
     client_delay_info = {}
     client_ids = list(range(num_clients))
+
+    if dist_type.lower() == "none":
+        # 无迟到者：全部客户端从第 0 轮在场（E1 的 A0 对照）。
+        # 仍然抽一次并丢弃，使随机数流与 "single" 对齐——否则后续的图生成会拿到
+        # 不同的 RNG 状态，A0 与 A1/A2 的拓扑就不再是同一张图，配对设计失效。
+        random.choice(client_ids)
+        return client_delay_info
 
     if dist_type.lower() == "single":
         if num_clients < 1:
@@ -171,9 +212,12 @@ def get_client_delay_info(num_clients, delay_client_ratio, minimum_round, total_
         delayed_client_ids = set(random.sample(client_ids, num_delayed))
 
         if dist_type.lower() == "uniform":
+            # join_round_max > 0 时把到达窗口收紧到 (minimum_round, join_round_max]
+            # （E4：把全部到达移进 plateau 区，并在尾部留出成员固定的窗口）
+            upper = join_round_max if join_round_max > 0 else total_rounds
             for cid in client_ids:
                 if cid in delayed_client_ids:
-                    join_round = random.randint(minimum_round + 1, total_rounds)
+                    join_round = random.randint(minimum_round + 1, upper)
                     client_delay_info[cid] = join_round
 
         elif dist_type.lower() == "even":
